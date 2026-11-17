@@ -30,7 +30,7 @@ Sans lecteur : `BADGEUSE_READER=mock npm run tauri dev`, puis importez `fixtures
 
 ## Utilisation
 
-1. **Étudiants → Importer** : choisissez le fichier, vérifiez les colonnes, puis choisissez ou créez la promotion.
+1. **Étudiants → Importer** : au besoin, **Télécharger le modèle (CSV)** (ou `fixtures/modele_import_etudiants.csv`) pour les colonnes attendues, remplissez-le, choisissez le fichier, vérifiez les colonnes, puis choisissez ou créez la promotion.
 2. **Créneaux → Nouveau créneau** : intitulé, horaires, seuil de retard, puis groupes ou promotion attendus.
 3. **Émarger** → **Ouvrir l'émargement**. Les étudiants badgent. Une carte inconnue vous demande à quel étudiant l'associer.
 4. **Clore l'émargement**, puis **Export Excel**.

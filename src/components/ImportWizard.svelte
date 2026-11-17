@@ -37,6 +37,22 @@
     await choose();
   });
 
+  // Modèle de fichier à remplir : mêmes en-têtes que celles reconnues à l'import.
+  function downloadTemplate() {
+    const rows = [
+      "N° étudiant;Nom;Prénom;Email;Groupe",
+      "22301001;Dupont;Alice;alice.dupont@etu.example.fr;TD1",
+      '22301002;Martin;Bob;bob.martin@etu.example.fr;"TD1, TP1a"',
+    ];
+    const blob = new Blob(["﻿" + rows.join("\r\n") + "\r\n"], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "modele_import_etudiants.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function choose() {
     const p = await pickFile();
     if (!p) return;
@@ -97,7 +113,11 @@
     </div>
   {:else if !preview}
     <p>Choisissez un fichier CSV, XLSX, XLS ou ODS exporté de la scolarité (une ligne par étudiant, en-têtes en première ligne).</p>
-    <div><button class="primary" onclick={choose}>Choisir un fichier…</button></div>
+    <p class="muted small">Colonnes attendues : <strong>N° étudiant</strong>, <strong>Nom</strong>, <strong>Prénom</strong>, Email (facultatif), Groupe(s) (facultatif, séparés par , ; / ou |). L'ordre et la casse n'ont pas d'importance.</p>
+    <div class="row">
+      <button class="primary" onclick={choose}>Choisir un fichier…</button>
+      <button onclick={downloadTemplate}>Télécharger le modèle (CSV)</button>
+    </div>
   {:else}
     <div class="row">
       <span class="mono small grow">{path}</span>
