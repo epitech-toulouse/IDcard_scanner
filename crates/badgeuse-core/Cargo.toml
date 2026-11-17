@@ -1,0 +1,24 @@
+[package]
+name = "badgeuse-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+calamine = "0.38.0"
+chrono = { version = "0.4.45", features = ["serde"] }
+csv = "1.4.0"
+encoding_rs = "0.8.44"
+pcsc = { version = "2.9.0", optional = true }
+rusb = { version = "0.9.4", features = ["vendored"], optional = true }
+rusqlite = { version = "0.43.0", features = ["bundled", "chrono", "backup"] }
+rust_xlsxwriter = "0.102.0"
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.21"
+tracing = "0.1.44"
+
+[features]
+pcsc = ["dep:pcsc"]
+usb = ["dep:rusb"]
+
+[dev-dependencies]
+tempfile = "3.27.0"

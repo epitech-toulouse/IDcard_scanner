@@ -1,0 +1,7 @@
+N° étudiant;Nom;Prénom;Email;Groupe
+22301001;Dupont;Alice;alice.dupont@etu.example.fr;TD1
+22301002;Martin;Bob;bob.martin@etu.example.fr;TD1, TP1a
+22301003;Petit;Chloé;chloe.petit@etu.example.fr;TD1, TP1b
+22301004;Durand;David;;TD2, TP2a
+22301005;Leroy;Emma;emma.leroy@etu.example.fr;TD2, TP2b
+22301006;Moreau;Farid;farid.moreau@etu.example.fr;TD2, TP2a
