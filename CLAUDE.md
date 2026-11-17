@@ -23,7 +23,10 @@ cargo test -p badgeuse-core                   # tests métier (pas besoin de web
 npm run check                                 # svelte-check (types TS + Svelte)
 npm test                                      # vitest (src/**/*.test.ts)
 npm run tauri build                           # .deb + AppImage dans target/release/bundle/
-python3 tools/acr122u_test.py 30              # diagnostic du lecteur, sans pcscd ni dépendance
+python3 tools/acr122u_test.py 30              # diagnostic du lecteur en USB direct (sans pcscd)
+python3 tools/carte_tool.py                   # testeur PC/SC : lecteur + UID/ATR + contenu de la carte
+python3 tools/carte_tool.py read 4            # lit un bloc/une page
+python3 tools/carte_tool.py write 6 DEADBEEF  # écrit (édite) une carte MIFARE Classic / Ultralight / NTAG
 ```
 
 Prérequis système (Ubuntu/Debian) :
