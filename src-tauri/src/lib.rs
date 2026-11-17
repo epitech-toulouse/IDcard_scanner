@@ -5,9 +5,10 @@ mod commands;
 
 use badgeuse_core::attendance::{self, ScanOutcome};
 use badgeuse_core::model::Id;
-use badgeuse_core::nfc::{self, CardInfo, Feedback, LoopOptions, MockHandle, MockReader, ReaderKind, ReaderStatus};
+use badgeuse_core::nfc::{self, CardInfo, Feedback, LoopOptions, MockHandle, MockReader, ReaderKind, ReaderStatus, ReadersStatus};
 use badgeuse_core::db::{self, Connection};
 use badgeuse_core::{sessions, settings};
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -17,10 +18,17 @@ pub struct AppState {
     db: Arc<Mutex<Connection>>,
     /// Créneau qui reçoit les badges (None = simple identification).
     active_session: Arc<Mutex<Option<Id>>>,
-    reader_status: Arc<Mutex<ReaderStatus>>,
+    /// État de chaque lecteur, indexé par son identifiant stable.
+    readers: Arc<Mutex<BTreeMap<String, ReaderStatus>>>,
     feedback: Arc<AtomicBool>,
     mock: Option<MockHandle>,
     db_path: PathBuf,
+}
+
+impl AppState {
+    pub(crate) fn readers_status(&self) -> ReadersStatus {
+        ReadersStatus::build(lock(&self.readers).values().cloned().collect())
+    }
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -71,30 +79,85 @@ fn on_card(app: &AppHandle, state: &AppState, card: &CardInfo) -> Feedback {
     process_uid(app, &state.db, state.active(), &uid)
 }
 
-fn start_reader(app: AppHandle, kind: ReaderKind, mock: Option<MockReader>) {
+/// Enregistre l'état d'un lecteur et réémet la vue agrégée vers le front.
+fn publish_status(app: &AppHandle, st: ReaderStatus) {
+    let state = app.state::<AppState>();
+    let agg = {
+        let mut map = lock(&state.readers);
+        map.insert(st.name.clone(), st);
+        ReadersStatus::build(map.values().cloned().collect())
+    };
+    let _ = app.emit("reader-status", &agg);
+}
+
+/// Lance une boucle de lecture dans un thread dédié pour un lecteur donné.
+fn spawn_worker<F>(app: AppHandle, id: String, open: F)
+where
+    F: FnMut() -> Result<Box<dyn nfc::CardReader>, nfc::NfcError> + Send + 'static,
+{
     std::thread::Builder::new()
-        .name("nfc-reader".into())
+        .name(format!("nfc:{id}"))
         .spawn(move || {
             let state = app.state::<AppState>();
-            let mut mock = mock.map(|m| Box::new(m) as Box<dyn nfc::CardReader>);
-            let open = move || match kind {
-                ReaderKind::Mock => mock.take().ok_or_else(|| nfc::NfcError::Backend("simulateur arrêté".into())),
-                k => nfc::open_hardware(k),
-            };
-            let opts = LoopOptions { feedback: state.feedback.clone(), ..Default::default() };
+            let opts = LoopOptions { id, feedback: state.feedback.clone(), ..Default::default() };
             let status_app = app.clone();
             nfc::run_loop(
                 open,
                 opts,
-                move |st| {
-                    let s = status_app.state::<AppState>();
-                    *lock(&s.reader_status) = st.clone();
-                    let _ = status_app.emit("reader-status", &st);
-                },
+                move |st| publish_status(&status_app, st),
                 |card| on_card(&app, &state, card),
             );
         })
         .expect("thread lecteur");
+}
+
+/// Démarre la lecture NFC : un thread par lecteur, avec prise en compte des
+/// lecteurs branchés après le lancement (PC/SC). Plusieurs lecteurs alimentent
+/// le même créneau actif.
+fn start_readers(app: AppHandle, kind: ReaderKind, mock: Option<MockReader>) {
+    match kind {
+        ReaderKind::Mock => {
+            let mut slot = mock.map(|m| Box::new(m) as Box<dyn nfc::CardReader>);
+            spawn_worker(app, "mock".into(), move || {
+                slot.take().ok_or_else(|| nfc::NfcError::Backend("simulateur arrêté".into()))
+            });
+        }
+        ReaderKind::Usb => {
+            spawn_worker(app, "usb".into(), || nfc::open_hardware(ReaderKind::Usb));
+        }
+        ReaderKind::Pcsc | ReaderKind::Auto => {
+            std::thread::Builder::new()
+                .name("nfc-supervisor".into())
+                .spawn(move || {
+                    let mut running: HashSet<String> = HashSet::new();
+                    let mut usb_fallback = false;
+                    loop {
+                        match nfc::pcsc_reader_names() {
+                            Ok(names) => {
+                                for n in names.into_iter().filter(|n| nfc::is_contactless(n)) {
+                                    if running.insert(n.clone()) {
+                                        tracing::info!("nouveau lecteur PC/SC : {n}");
+                                        let name = n.clone();
+                                        spawn_worker(app.clone(), n, move || nfc::open_pcsc_named(&name));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                // pcscd injoignable : en mode Auto, on bascule une fois sur l'USB direct.
+                                if kind == ReaderKind::Auto && !usb_fallback && running.is_empty() {
+                                    usb_fallback = true;
+                                    running.insert("usb".into());
+                                    tracing::info!("PC/SC indisponible ({e}), bascule USB direct");
+                                    spawn_worker(app.clone(), "usb".into(), || nfc::open_hardware(ReaderKind::Usb));
+                                }
+                            }
+                        }
+                        std::thread::sleep(std::time::Duration::from_secs(3));
+                    }
+                })
+                .expect("thread superviseur NFC");
+        }
+    }
 }
 
 pub fn run() {
@@ -127,16 +190,12 @@ pub fn run() {
             app.manage(AppState {
                 db: Arc::new(Mutex::new(conn)),
                 active_session: Arc::new(Mutex::new(active)),
-                reader_status: Arc::new(Mutex::new(ReaderStatus {
-                    connected: false,
-                    backend: "none".into(),
-                    message: "Recherche du lecteur…".into(),
-                })),
+                readers: Arc::new(Mutex::new(BTreeMap::new())),
                 feedback: Arc::new(AtomicBool::new(cfg.reader_feedback)),
                 mock,
                 db_path,
             });
-            start_reader(app.handle().clone(), kind, mock_reader);
+            start_readers(app.handle().clone(), kind, mock_reader);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

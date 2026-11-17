@@ -7,7 +7,7 @@ use badgeuse_core::export::{self, ExportSummary, PeriodFilter};
 use badgeuse_core::groups::{self, Kind};
 use badgeuse_core::import::{self, ColumnMapping, ImportReport, Preview};
 use badgeuse_core::model::*;
-use badgeuse_core::nfc::{self, ReaderStatus};
+use badgeuse_core::nfc::{self, ReadersStatus};
 use badgeuse_core::settings::{self, Settings};
 use badgeuse_core::{Error, Result, db, sessions, students};
 use chrono::NaiveDateTime;
@@ -220,8 +220,8 @@ pub fn export_period(state: S, filter: PeriodFilter, path: PathBuf) -> Result<Ex
 // ---------- Lecteur ----------
 
 #[tauri::command]
-pub fn reader_status(state: S) -> ReaderStatus {
-    crate::lock(&state.reader_status).clone()
+pub fn reader_status(state: S) -> ReadersStatus {
+    state.readers_status()
 }
 
 /// Simule la pose d'une carte (lecteur simulé uniquement).

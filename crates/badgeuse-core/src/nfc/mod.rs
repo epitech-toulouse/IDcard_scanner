@@ -130,13 +130,64 @@ pub fn open_hardware(kind: ReaderKind) -> Result<Box<dyn CardReader>, NfcError> 
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ReaderStatus {
+    /// Identifiant stable du lecteur (nom PC/SC, « usb » ou « mock »).
+    pub name: String,
     pub connected: bool,
     /// pcsc | usb | mock | none
     pub backend: String,
     pub message: String,
 }
 
+/// Vue agrégée de tous les lecteurs, pour le front (compatible avec l'ancien `ReaderStatus`).
+#[derive(Debug, Clone, Serialize)]
+pub struct ReadersStatus {
+    pub connected: bool,
+    pub backend: String,
+    pub message: String,
+    pub count: usize,
+    pub connected_count: usize,
+    pub readers: Vec<ReaderStatus>,
+}
+
+impl ReadersStatus {
+    pub fn build(mut readers: Vec<ReaderStatus>) -> Self {
+        readers.sort_by(|a, b| a.name.cmp(&b.name));
+        let connected_count = readers.iter().filter(|r| r.connected).count();
+        let count = readers.len();
+        let first = readers.iter().find(|r| r.connected);
+        let backend = first.map(|r| r.backend.clone()).unwrap_or_else(|| "none".into());
+        let message = match (count, connected_count) {
+            (0, _) => "Recherche du lecteur…".into(),
+            (1, _) => readers[0].message.clone(),
+            (_, 0) => format!("{count} lecteurs, aucun connecté"),
+            (n, c) if c == n => format!("{c} lecteurs connectés"),
+            (_, c) => format!("{c} lecteur(s) connecté(s) sur {count}"),
+        };
+        ReadersStatus { connected: connected_count > 0, backend, message, count, connected_count, readers }
+    }
+}
+
+/// Heuristique « lecteur sans contact » (NFC), pour ignorer les lecteurs à contact.
+pub fn is_contactless(name: &str) -> bool {
+    let n = name.to_ascii_uppercase();
+    n.contains("ACR122") || n.contains("PICC") || n.contains("CONTACTLESS") || n.contains("NFC")
+}
+
+/// Noms des lecteurs PC/SC branchés (tous backends confondus).
+#[cfg(feature = "pcsc")]
+pub fn pcsc_reader_names() -> Result<Vec<String>, NfcError> {
+    pcsc::list_reader_names()
+}
+
+/// Ouvre un lecteur PC/SC précis, par son nom.
+#[cfg(feature = "pcsc")]
+pub fn open_pcsc_named(name: &str) -> Result<Box<dyn CardReader>, NfcError> {
+    Ok(Box::new(pcsc::PcscReader::open_named(name)?))
+}
+
 pub struct LoopOptions {
+    /// Identifiant stable du lecteur piloté par cette boucle.
+    pub id: String,
     pub debounce: Duration,
     pub poll: Duration,
     pub retry: Duration,
@@ -147,6 +198,7 @@ pub struct LoopOptions {
 impl Default for LoopOptions {
     fn default() -> Self {
         LoopOptions {
+            id: "lecteur".into(),
             debounce: Duration::from_secs(3),
             poll: Duration::from_millis(300),
             retry: Duration::from_secs(2),
@@ -176,6 +228,7 @@ pub fn run_loop(
     mut on_status: impl FnMut(ReaderStatus),
     mut on_card: impl FnMut(&CardInfo) -> Feedback,
 ) {
+    let id = opts.id.clone();
     let mut last: Option<(Vec<u8>, Instant)> = None;
     let mut last_error = String::new();
     while !opts.stop.load(Ordering::Relaxed) {
@@ -184,8 +237,8 @@ pub fn run_loop(
             Err(e) => {
                 let msg = e.to_string();
                 if msg != last_error {
-                    tracing::warn!("{msg}");
-                    on_status(ReaderStatus { connected: false, backend: "none".into(), message: msg.clone() });
+                    tracing::warn!("[{id}] {msg}");
+                    on_status(ReaderStatus { name: id.clone(), connected: false, backend: "none".into(), message: msg.clone() });
                     last_error = msg;
                 }
                 std::thread::sleep(opts.retry);
@@ -195,7 +248,7 @@ pub fn run_loop(
         last_error.clear();
         let name = reader.name();
         tracing::info!("lecteur connecté : {name}");
-        on_status(ReaderStatus { connected: true, backend: backend_of(&name).into(), message: name });
+        on_status(ReaderStatus { name: id.clone(), connected: true, backend: backend_of(&name).into(), message: name });
 
         while !opts.stop.load(Ordering::Relaxed) {
             match reader.wait_card(opts.poll) {
@@ -213,8 +266,8 @@ pub fn run_loop(
                 }
                 Err(e) => {
                     let msg = format!("Lecteur déconnecté : {e}");
-                    tracing::warn!("{msg}");
-                    on_status(ReaderStatus { connected: false, backend: "none".into(), message: msg });
+                    tracing::warn!("[{id}] {msg}");
+                    on_status(ReaderStatus { name: id.clone(), connected: false, backend: "none".into(), message: msg });
                     break;
                 }
             }

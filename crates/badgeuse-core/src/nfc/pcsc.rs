@@ -17,6 +17,13 @@ fn err(e: pcsc::Error) -> NfcError {
     NfcError::Backend(format!("PC/SC : {e}"))
 }
 
+/// Noms de tous les lecteurs PC/SC branchés.
+pub fn list_reader_names() -> Result<Vec<String>, NfcError> {
+    let ctx = Context::establish(Scope::User).map_err(|e| NfcError::NoReader(format!("pcscd injoignable ({e})")))?;
+    let readers = ctx.list_readers_owned().map_err(|e| NfcError::NoReader(e.to_string()))?;
+    Ok(readers.iter().map(|r| r.to_string_lossy().into_owned()).collect())
+}
+
 impl PcscReader {
     pub fn open() -> Result<Self, NfcError> {
         let ctx = Context::establish(Scope::User).map_err(|e| NfcError::NoReader(format!("pcscd injoignable ({e})")))?;
@@ -24,13 +31,26 @@ impl PcscReader {
         // On préfère un lecteur sans contact s'il y en a plusieurs.
         let reader = readers
             .iter()
-            .find(|r| {
-                let n = r.to_string_lossy().to_ascii_uppercase();
-                n.contains("ACR122") || n.contains("PICC") || n.contains("CONTACTLESS")
-            })
+            .find(|r| super::is_contactless(&r.to_string_lossy()))
             .or(readers.first())
             .cloned()
             .ok_or_else(|| NfcError::NoReader("aucun lecteur PC/SC".into()))?;
+        Ok(PcscReader { ctx, reader, state: State::UNAWARE, card: None, buzzer_configured: false })
+    }
+
+    /// Ouvre un lecteur PC/SC précis par son nom (utilisé en multi-lecteurs).
+    pub fn open_named(name: &str) -> Result<Self, NfcError> {
+        let ctx = Context::establish(Scope::User).map_err(|e| NfcError::NoReader(format!("pcscd injoignable ({e})")))?;
+        // Vérifie que le lecteur est toujours présent (sinon on remonte l'erreur pour réessai).
+        let present = ctx
+            .list_readers_owned()
+            .map_err(|e| NfcError::NoReader(e.to_string()))?
+            .iter()
+            .any(|r| r.to_string_lossy() == name);
+        if !present {
+            return Err(NfcError::NoReader(format!("lecteur « {name} » absent")));
+        }
+        let reader = CString::new(name).map_err(|_| NfcError::Backend("nom de lecteur invalide".into()))?;
         Ok(PcscReader { ctx, reader, state: State::UNAWARE, card: None, buzzer_configured: false })
     }
 

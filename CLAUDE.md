@@ -46,7 +46,7 @@ crates/badgeuse-core/src/
   export.rs      xlsx : feuille d'un créneau, et période (matrice + statistiques)
   nfc/           trait CardReader, run_loop (reconnexion, anti-rebond 3 s), pcsc.rs, usb.rs, mock.rs, acr122.rs
 src-tauri/src/
-  lib.rs         état (Mutex<Connection>, créneau actif), thread lecteur → événements
+  lib.rs         état (Mutex<Connection>, créneau actif), un thread par lecteur + superviseur PC/SC → événements
   commands.rs    #[tauri::command] fins qui délèguent au core
 src/
   lib/api.ts     wrappers typés des commandes et des événements
@@ -80,6 +80,7 @@ Flux d'un badge :
 - Sources : `badge`, `manual` (correction du prof), `auto` (clôture).
 - UID stocké au format `04:24:A5:82:E6:19:90` (`nfc::format_uid`). Les UID aléatoires (4 octets commençant par `0x08`) sont refusés.
 - Un seul créneau « actif » reçoit les badges : c'est celui ouvert ou affiché dans l'écran d'émargement.
+- Multi-lecteurs : en PC/SC, un thread par lecteur (clé = nom PC/SC) ; un superviseur détecte les lecteurs branchés en cours de route. Tous alimentent le même créneau actif. L'anti-rebond de 3 s est par lecteur. L'USB direct et le simulé restent mono-lecteur. Le front reçoit une vue agrégée `ReadersStatus` (événement `reader-status`).
 
 ## Conventions
 

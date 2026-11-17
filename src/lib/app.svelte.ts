@@ -1,7 +1,7 @@
 // État global de l'interface : route, statut du lecteur, notifications, dialogues.
 
 import { ask, open, save } from "@tauri-apps/plugin-dialog";
-import type { ReaderStatus } from "./types";
+import type { ReadersStatus } from "./types";
 
 // ---------- Routage par hash : #/emargement/12 ----------
 
@@ -19,7 +19,14 @@ export function navigate(path: string) {
 
 // ---------- Lecteur ----------
 
-export const reader = $state<ReaderStatus>({ connected: false, backend: "none", message: "Recherche du lecteur…" });
+export const reader = $state<ReadersStatus>({
+  connected: false,
+  backend: "none",
+  message: "Recherche du lecteur…",
+  count: 0,
+  connected_count: 0,
+  readers: [],
+});
 
 // ---------- Notifications ----------
 

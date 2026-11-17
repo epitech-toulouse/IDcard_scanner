@@ -42,18 +42,32 @@
 
 <div class="stack">
   <section class="card">
-    <h2>Lecteur NFC</h2>
+    <h2>Lecteur(s) NFC</h2>
     <p>
-      <span class="pill" class:present={reader.connected} class:absent={!reader.connected}>{reader.connected ? "Connecté" : "Non connecté"}</span>
+      <span class="pill" class:present={reader.connected} class:absent={!reader.connected}>
+        {reader.connected ? (reader.connected_count > 1 ? `${reader.connected_count} connectés` : "Connecté") : "Non connecté"}
+      </span>
       <span class="small">{reader.message}</span>
     </p>
+    {#if reader.readers.length}
+      <ul class="readers small">
+        {#each reader.readers as r (r.name)}
+          <li>
+            <span class="dot" class:on={r.connected}></span>
+            <span class="mono grow">{r.name}</span>
+            <span class="muted">{r.connected ? r.message : "déconnecté"}</span>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+    <p class="muted small">Plusieurs lecteurs peuvent être branchés en même temps (PC/SC) : ils alimentent tous le même créneau. Un lecteur branché en cours de séance est détecté automatiquement.</p>
     {#if settings}
       <div class="grid2">
         <label class="field">
           Type de lecteur
           <select bind:value={settings.reader}>
-            <option value="auto">Automatique (PC/SC puis USB direct)</option>
-            <option value="pcsc">PC/SC uniquement (pcscd)</option>
+            <option value="auto">Automatique (PC/SC, multi-lecteurs ; secours USB direct)</option>
+            <option value="pcsc">PC/SC uniquement (pcscd, multi-lecteurs)</option>
             <option value="usb">USB direct ACR122U (sans pcscd)</option>
             <option value="mock">Simulé (démonstration / tests)</option>
           </select>
@@ -97,3 +111,10 @@
     <p class="muted small">Données personnelles (RGPD) : conservez seulement le nécessaire. En fin d'année, exportez puis supprimez la promotion dans « Groupes ».</p>
   </section>
 </div>
+
+<style>
+  .readers { list-style: none; margin: 0.25rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+  .readers li { display: flex; align-items: center; gap: 0.5rem; }
+  .readers .dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--absent); flex: none; }
+  .readers .dot.on { background: var(--present); }
+</style>

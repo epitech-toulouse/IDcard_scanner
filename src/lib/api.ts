@@ -55,7 +55,7 @@ export const api = {
   exportPeriod: (filter: T.PeriodFilter, path: string) => invoke<T.ExportSummary>("export_period", { filter, path }),
 
   // Lecteur
-  readerStatus: () => invoke<T.ReaderStatus>("reader_status"),
+  readerStatus: () => invoke<T.ReadersStatus>("reader_status"),
   injectCard: (uid: string) => invoke<void>("inject_card", { uid }),
 
   // Réglages
@@ -69,7 +69,7 @@ export const api = {
 export const events = {
   onCard: (cb: (o: T.ScanOutcome) => void): Promise<UnlistenFn> =>
     listen<T.ScanOutcome>("card-scanned", (e) => cb(e.payload)),
-  onReader: (cb: (s: T.ReaderStatus) => void): Promise<UnlistenFn> =>
-    listen<T.ReaderStatus>("reader-status", (e) => cb(e.payload)),
+  onReader: (cb: (s: T.ReadersStatus) => void): Promise<UnlistenFn> =>
+    listen<T.ReadersStatus>("reader-status", (e) => cb(e.payload)),
   onError: (cb: (msg: string) => void): Promise<UnlistenFn> => listen<string>("app-error", (e) => cb(e.payload)),
 };

@@ -84,7 +84,15 @@ export type ScanOutcome =
   | { kind: "session_not_open"; uid: string }
   | { kind: "random_uid"; uid: string };
 
-export interface ReaderStatus { connected: boolean; backend: "pcsc" | "usb" | "mock" | "none"; message: string }
+export interface ReaderStatus { name: string; connected: boolean; backend: "pcsc" | "usb" | "mock" | "none"; message: string }
+export interface ReadersStatus {
+  connected: boolean;
+  backend: "pcsc" | "usb" | "mock" | "none";
+  message: string;
+  count: number;
+  connected_count: number;
+  readers: ReaderStatus[];
+}
 
 export interface ColumnMapping {
   student_number: number | null;
