@@ -1,6 +1,6 @@
 // Message affiché pour un badge (écran d'émargement, projection, affichage automatique).
 
-import { fmtTime } from "./format";
+import { fmtTimeSec } from "./format";
 import { STATUS_LABEL, type ScanOutcome, type Student } from "./types";
 
 export interface ScanMessage {
@@ -18,7 +18,7 @@ export function describeScan(o: ScanOutcome): ScanMessage {
       return {
         cls: o.status,
         title: studentName(o.student),
-        sub: `${o.status === "late" ? "En retard" : "Présent"} · ${fmtTime(o.scanned_at)}`,
+        sub: `${o.status === "late" ? "En retard" : "Présent"} · ${fmtTimeSec(o.scanned_at)}`,
       };
     case "already_scanned":
       return { cls: o.status, title: studentName(o.student), sub: `Déjà enregistré (${STATUS_LABEL[o.status].toLowerCase()})` };

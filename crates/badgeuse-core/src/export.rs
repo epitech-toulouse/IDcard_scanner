@@ -96,7 +96,7 @@ fn session_cells(r: &AttendanceRow) -> [String; 9] {
         r.student.student_number.clone(),
         r.groups.clone(),
         r.status.map(Status::label).unwrap_or("Non badgé").into(),
-        r.scanned_at.map(|t| t.format("%H:%M").to_string()).unwrap_or_default(),
+        r.scanned_at.map(|t| t.format("%H:%M:%S").to_string()).unwrap_or_default(),
         r.source.map(Source::label).unwrap_or("").into(),
         r.reason.clone().unwrap_or_default(),
         if r.expected { "Oui" } else { "Non" }.into(),
@@ -459,7 +459,7 @@ mod tests {
         assert!(txt.starts_with('\u{FEFF}'), "BOM UTF-8 pour Excel");
         let lines: Vec<&str> = txt.trim_start_matches('\u{FEFF}').lines().collect();
         assert_eq!(lines[0], "Créneau;Début;Nom;Prénom;N° étudiant;Groupe(s);Statut;Heure;Source;Motif;Attendu");
-        assert_eq!(lines[1], "Réseaux;17/11/2026 08:00;DUPONT;Alice;1;TD1;En retard;08:20;Badge;;Oui");
+        assert_eq!(lines[1], "Réseaux;17/11/2026 08:00;DUPONT;Alice;1;TD1;En retard;08:20:00;Badge;;Oui");
         assert_eq!(lines[2], "Réseaux;17/11/2026 08:00;MARTIN;Bob;2;TD1;Absent;;Clôture;;Oui");
 
         let p2 = dir.path().join("periode.csv");

@@ -67,6 +67,13 @@ export function fmtTime(s: Naive | null): string {
   return s ? splitNaive(s).time.replace(":", "h") : "";
 }
 
+/** Heure de passage (badge) avec les secondes : 08h05:42. */
+export function fmtTimeSec(s: Naive | null): string {
+  if (!s) return "";
+  const t = (s.split("T")[1] ?? "00:00:00").padEnd(8, ":00").slice(0, 8);
+  return t.replace(":", "h");
+}
+
 export function fmtRange(start: Naive, end: Naive): string {
   return `${fmtDate(start)} · ${fmtTime(start)} – ${fmtTime(end)}`;
 }
