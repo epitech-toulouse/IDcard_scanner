@@ -3,7 +3,7 @@
   import { api, events } from "../lib/api";
   import { confirmAction, guard, navigate, reader, toast } from "../lib/app.svelte";
   import { exportSession } from "../lib/actions";
-  import { fmtRange, fmtTime, isToday, toNaive } from "../lib/format";
+  import { fmtRange, fmtTime, fmtTimeSec, isToday, toNaive } from "../lib/format";
   import Modal from "../components/Modal.svelte";
   import StatusPill from "../components/StatusPill.svelte";
   import StudentPicker from "../components/StudentPicker.svelte";
@@ -72,7 +72,7 @@
     flash = { cls, title, sub };
     clearTimeout(flashTimer);
     flashTimer = setTimeout(() => (flash = null), 4000);
-    feed = [{ id: feedId++, cls, title, sub, at: fmtTime(toNaive(new Date())) }, ...feed].slice(0, 12);
+    feed = [{ id: feedId++, cls, title, sub, at: fmtTimeSec(toNaive(new Date())) }, ...feed].slice(0, 12);
   }
 
   async function onCard(o: ScanOutcome) {
@@ -239,7 +239,7 @@
                 </td>
                 <td class="small">{r.groups}</td>
                 <td><StatusPill status={r.status} />{#if r.reason}<div class="small muted">{r.reason}</div>{/if}</td>
-                <td class="small">{fmtTime(r.scanned_at)}</td>
+                <td class="small">{fmtTimeSec(r.scanned_at)}</td>
                 <td class="small muted">{r.source ? SOURCE_LABEL[r.source] : ""}</td>
                 <td class="actions">
                   <select class="small" value="" onchange={(e) => { setStatus(r, e.currentTarget.value); e.currentTarget.value = ""; }}>

@@ -4,7 +4,7 @@
   import { onMount } from "svelte";
   import { api, events } from "../lib/api";
   import { guard, reader, toast } from "../lib/app.svelte";
-  import { fmtTime } from "../lib/format";
+  import { fmtTimeSec } from "../lib/format";
   import Modal from "../components/Modal.svelte";
   import StudentPicker from "../components/StudentPicker.svelte";
   import type { CardDiagnostic, Student, StudentRow } from "../lib/types";
@@ -113,7 +113,7 @@
         <dt>SAK</dt><dd class="mono">{hex(last.sak)}</dd>
         <dt>ATR</dt><dd class="mono">{last.atr ?? "—"}</dd>
         <dt>Lecteur</dt><dd class="mono">{last.reader}</dd>
-        <dt>Lu à</dt><dd>{fmtTime(last.scanned_at)}</dd>
+        <dt>Lu à</dt><dd>{fmtTimeSec(last.scanned_at)}</dd>
       </dl>
     {:else}
       <div class="empty">
@@ -132,7 +132,7 @@
           {#each history as p (p.n)}
             <tr>
               <td class="muted">{p.n}</td>
-              <td>{fmtTime(p.scanned_at)}</td>
+              <td>{fmtTimeSec(p.scanned_at)}</td>
               <td class="mono">{p.uid}</td>
               <td class="small">{p.card_type}</td>
               <td class="mono small">{p.reader}</td>

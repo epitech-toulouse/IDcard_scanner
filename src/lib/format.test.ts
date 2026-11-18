@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addDays, addMinutes, fmtTime, joinNaive, parseNaive, pct, safeFileName, schoolYear, splitNaive, startOfWeek, toNaive,
+  addDays, addMinutes, fmtTime, fmtTimeSec, joinNaive, parseNaive, pct, safeFileName, schoolYear, splitNaive, startOfWeek, toNaive,
 } from "./format";
 
 describe("dates naïves", () => {
@@ -27,6 +27,9 @@ describe("dates naïves", () => {
   it("formatage", () => {
     expect(fmtTime("2026-11-17T08:05:00")).toBe("08h05");
     expect(fmtTime(null)).toBe("");
+    expect(fmtTimeSec("2026-11-17T08:05:42")).toBe("08h05:42");
+    expect(fmtTimeSec("2026-11-17T08:05")).toBe("08h05:00");
+    expect(fmtTimeSec(null)).toBe("");
     expect(pct(1, 3)).toBe("33 %");
     expect(pct(0, 0)).toBe("–");
     expect(safeFileName("Réseaux – B12 17/11")).toBe("Reseaux_B12_17_11");
