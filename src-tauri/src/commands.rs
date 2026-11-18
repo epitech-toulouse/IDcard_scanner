@@ -83,6 +83,11 @@ pub fn delete_student(state: S, id: Id) -> Result<()> {
 }
 
 #[tauri::command]
+pub fn bulk_students(state: S, ids: Vec<Id>, action: BulkAction) -> Result<usize> {
+    students::bulk(&state.db(), &ids, &action)
+}
+
+#[tauri::command]
 pub fn link_card(state: S, uid: String, student_id: Id) -> Result<()> {
     let uid = nfc::parse_uid(&uid).map(|u| nfc::format_uid(&u)).ok_or_else(|| Error::Invalid("UID invalide".into()))?;
     students::link_card(&state.db(), &uid, student_id)
@@ -233,6 +238,12 @@ pub fn inject_card(state: S, uid: String) -> Result<()> {
     Ok(())
 }
 
+/// Active/désactive le mode « Test cartes » (badges diagnostiqués, pas enregistrés).
+#[tauri::command]
+pub fn set_card_test(state: S, enabled: bool) {
+    state.card_test.store(enabled, Ordering::Relaxed);
+}
+
 // ---------- Réglages & données ----------
 
 #[tauri::command]
@@ -245,6 +256,7 @@ pub fn save_settings(state: S, settings: Settings) -> Result<()> {
     settings.reader.parse::<nfc::ReaderKind>().map_err(Error::Invalid)?;
     settings::save(&state.db(), &settings)?;
     state.feedback.store(settings.reader_feedback, Ordering::Relaxed);
+    state.beep.store(settings.reader_beep.as_u8(), Ordering::Relaxed);
     Ok(())
 }
 

@@ -1,6 +1,6 @@
 //! Backend PC/SC (pcscd + libccid).
 
-use super::{CardInfo, CardReader, Feedback, NfcError, acr122};
+use super::{Beep, CardInfo, CardReader, Feedback, NfcError, acr122};
 use pcsc::{Card, Context, Protocols, ReaderState, Scope, ShareMode, State};
 use std::ffi::CString;
 use std::time::Duration;
@@ -75,8 +75,9 @@ impl PcscReader {
             let _ = card.transmit(&acr122::BUZZER_ON_DETECT_OFF, &mut buf);
             self.buzzer_configured = true;
         }
+        let atr = card.status2_owned().ok().map(|st| st.atr().to_vec()).filter(|a| !a.is_empty());
         self.card = Some(card);
-        Ok(Some(CardInfo::new(resp[..resp.len() - 2].to_vec())))
+        Ok(Some(CardInfo { atr, ..CardInfo::new(resp[..resp.len() - 2].to_vec()) }))
     }
 }
 
@@ -110,10 +111,10 @@ impl CardReader for PcscReader {
         self.read_uid()
     }
 
-    fn feedback(&mut self, fb: Feedback) {
+    fn feedback(&mut self, fb: Feedback, beep: Beep) {
         if let Some(card) = self.card.take() {
             let mut buf = [0u8; 16];
-            if let Err(e) = card.transmit(&acr122::led_buzzer(fb), &mut buf) {
+            if let Err(e) = card.transmit(&acr122::led_buzzer(fb, beep), &mut buf) {
                 tracing::debug!("retour LED ignoré : {e}");
             }
         }

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, events } from "./lib/api";
-  import { reader, route, toast } from "./lib/app.svelte";
+  import { navigate, reader, route, toast } from "./lib/app.svelte";
   import Toasts from "./components/Toasts.svelte";
   import ReaderIndicator from "./components/ReaderIndicator.svelte";
   import Accueil from "./pages/Accueil.svelte";
@@ -11,14 +11,18 @@
   import Groupes from "./pages/Groupes.svelte";
   import Exports from "./pages/Exports.svelte";
   import Reglages from "./pages/Reglages.svelte";
+  import Cartes from "./pages/Cartes.svelte";
+  import Affichage from "./pages/Affichage.svelte";
 
   const NAV = [
     { path: "accueil", label: "Accueil", icon: "⌂" },
     { path: "emargement", label: "Émargement", icon: "◉" },
+    { path: "affichage", label: "Affichage auto", icon: "▣" },
     { path: "creneaux", label: "Créneaux", icon: "▦" },
     { path: "etudiants", label: "Étudiants", icon: "☺" },
     { path: "groupes", label: "Groupes", icon: "⋔" },
     { path: "exports", label: "Exports", icon: "⇩" },
+    { path: "cartes", label: "Test cartes", icon: "▭" },
     { path: "reglages", label: "Réglages", icon: "⚙" },
   ];
 
@@ -30,6 +34,15 @@
     const offs = [
       events.onReader((s) => Object.assign(reader, s)),
       events.onError((m) => toast(m, "error", 7000)),
+      events.onSessionAuto((e) => {
+        if (e.action === "open") {
+          toast(`Émargement ouvert automatiquement : ${e.title}`, "success", 7000);
+          // Écran d'émargement en attente d'un créneau : on y affiche celui qui vient d'ouvrir.
+          if (route.parts[0] === "emargement" && !route.parts[1]) navigate(`emargement/${e.session_id}`);
+        } else {
+          toast(`Créneau « ${e.title} » clos automatiquement · ${e.absents} absent(s)`, "info", 7000);
+        }
+      }),
     ];
     return () => offs.forEach((p) => p.then((off) => off()));
   });
@@ -58,6 +71,8 @@
       {:else if page === "etudiants"}<Etudiants />
       {:else if page === "groupes"}<Groupes />
       {:else if page === "exports"}<Exports />
+      {:else if page === "affichage"}<Affichage />
+      {:else if page === "cartes"}<Cartes />
       {:else if page === "reglages"}<Reglages />
       {:else}<p>Page inconnue.</p>
       {/if}

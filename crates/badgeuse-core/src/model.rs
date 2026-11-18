@@ -167,6 +167,23 @@ pub struct StudentFilter {
     pub include_inactive: bool,
 }
 
+/// Action appliquée d'un coup à une sélection d'étudiants.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BulkAction {
+    /// Passe les étudiants actifs ou inactifs.
+    SetActive { active: bool },
+    /// Change de promotion ; les groupes d'une autre promotion sont retirés.
+    SetCohort { cohort_id: Option<Id> },
+    /// Ajoute au groupe (les étudiants sans promotion prennent celle du groupe).
+    AddToGroup { group_id: Id },
+    RemoveFromGroup { group_id: Id },
+    /// Dissocie toutes les cartes.
+    UnlinkCards,
+    /// Supprime les étudiants et leur historique.
+    Delete,
+}
+
 // ---------- Créneaux ----------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,7 +1,7 @@
 # Badgeuse
 
 Application de bureau Linux pour faire l'appel des étudiants avec leur carte étudiant NFC.
-Elle gère les créneaux d'émargement, les groupes (cursus > promotion > groupe) et l'export Excel des présences.
+Elle gère les créneaux d'émargement, les groupes (cursus > promotion > groupe) et l'export Excel / CSV des présences.
 Utilisateur cible : un enseignant, sur son PC, avec un lecteur ACS ACR122U.
 
 ## Stack
@@ -43,16 +43,18 @@ crates/badgeuse-core/src/
   db.rs          ouverture, migrations (PRAGMA user_version), sauvegarde/restauration
   groups.rs students.rs sessions.rs attendance.rs settings.rs   accès données par entité
   import.rs      CSV (UTF-8/Windows-1252, ; , tab) et XLSX/XLS/ODS → étudiants
-  export.rs      xlsx : feuille d'un créneau, et période (matrice + statistiques)
-  nfc/           trait CardReader, run_loop (reconnexion, anti-rebond 3 s), pcsc.rs, usb.rs, mock.rs, acr122.rs
+  export.rs      xlsx ou CSV (selon l'extension ; CSV = « ; » + BOM UTF-8) : feuille d'un créneau, et période
+                 (matrice + statistiques ; le CSV n'a pas les statistiques par groupe)
+  nfc/           trait CardReader, run_loop (reconnexion, anti-rebond 3 s), pcsc.rs, usb.rs, mock.rs, acr122.rs,
+                 diagnostic.rs (type de carte d'après ATR/SAK, pour « Test cartes »)
 src-tauri/src/
   lib.rs         état (Mutex<Connection>, créneau actif), un thread par lecteur + superviseur PC/SC → événements
   commands.rs    #[tauri::command] fins qui délèguent au core
 src/
   lib/api.ts     wrappers typés des commandes et des événements
   lib/app.svelte.ts   route (#/page/id), statut lecteur, toasts, dialogues natifs
-  pages/         Accueil, Emargement (écran live + projection), Creneaux, Etudiants, Groupes, Exports, Reglages
-  components/    Modal, TargetPicker, StudentPicker, SessionForm, StudentForm, ImportWizard…
+  pages/         Accueil, Emargement (écran live + projection), Affichage (plein écran : créneau actif jusqu'à début + retard, puis « prochain émargement à … »), Creneaux, Etudiants, Groupes, Exports, Cartes (test), Reglages
+  components/    Modal, TargetPicker, StudentPicker, Projection, SessionForm, StudentForm, ImportWizard…
 ```
 
 Flux d'un badge :
@@ -60,6 +62,9 @@ Flux d'un badge :
 2. `on_card` (lib.rs) appelle `attendance::record_scan`, ou `identify` si aucun créneau n'est actif.
 3. L'événement `card-scanned` (un `ScanOutcome`) part vers le front, avec le retour LED/bip.
 4. Une carte inconnue ouvre `StudentPicker`, puis `link_card` puis `rescan`.
+
+Mode « Test cartes » (`set_card_test`, actif tant que la page `#/cartes` est affichée) : `on_card` émet
+`card-test` (un `CardDiagnostic`) au lieu d'enregistrer quoi que ce soit, même si un créneau est actif.
 
 ## Vocabulaire et règles métier
 
@@ -77,6 +82,12 @@ Flux d'un badge :
   - `present` si l'heure ≤ début + `late_after_min` (borne incluse), sinon `late` ;
   - un nouveau badge ne rétrograde jamais un présent/retard, mais remplace une absence.
 - Clôture : les attendus sans ligne passent `absent` avec `source='auto'`. La réouverture supprime ces lignes `auto`.
+- Automatique (réglages `auto_open`, `auto_open_lead_min`, `auto_close`) : un thread `sessions-auto` (lib.rs) appelle
+  `attendance::run_auto` toutes les 20 s (règle pure : `domain::auto_action`). Un créneau `planned` s'ouvre de
+  `début − avance` jusqu'à sa fin (jamais après coup). À chaque passage, le créneau actif est réévalué (`domain::pick_active`) :
+  il bascule sur le créneau ouvert en cours dès que l'actif est terminé (événement `active-session`) ;
+  un créneau ouvert dont la fin est passée est clos si `auto_close` (défaut : non). Un créneau clos automatiquement
+  puis rouvert à la main n'est pas reclos (mémoire du thread). Événement front : `session-auto`.
 - Sources : `badge`, `manual` (correction du prof), `auto` (clôture).
 - UID stocké au format `04:24:A5:82:E6:19:90` (`nfc::format_uid`). Les UID aléatoires (4 octets commençant par `0x08`) sont refusés.
 - Un seul créneau « actif » reçoit les badges : c'est celui ouvert ou affiché dans l'écran d'émargement.

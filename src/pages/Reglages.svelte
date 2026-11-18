@@ -73,6 +73,14 @@
           </select>
         </label>
         <label class="row"><input type="checkbox" bind:checked={settings.reader_feedback} /> Bip et LED du lecteur (vert / orange / rouge)</label>
+        <label class="field">
+          Bip du lecteur
+          <select bind:value={settings.reader_beep} disabled={!settings.reader_feedback}>
+            <option value="normal">Normal (1 bip ; 2 si retard ; 3 si erreur)</option>
+            <option value="discreet">Discret (un seul bip court)</option>
+            <option value="silent">Muet (LED uniquement)</option>
+          </select>
+        </label>
       </div>
       <p class="muted small">La variable d'environnement <span class="mono">BADGEUSE_READER</span> est prioritaire sur ce réglage.</p>
     {/if}
@@ -96,6 +104,19 @@
         <label class="field">Seuil de retard par défaut (minutes) <input type="number" min="0" bind:value={settings.default_late_min} /></label>
         <label class="field">Durée par défaut (minutes) <input type="number" min="5" step="5" bind:value={settings.default_duration_min} /></label>
       </div>
+      <h3>Émargement automatique</h3>
+      <div class="grid2">
+        <label class="row"><input type="checkbox" bind:checked={settings.auto_open} /> Ouvrir les créneaux automatiquement</label>
+        <label class="field">
+          Ouverture (minutes avant le début)
+          <input type="number" min="0" max="120" bind:value={settings.auto_open_lead_min} disabled={!settings.auto_open} />
+        </label>
+        <label class="row"><input type="checkbox" bind:checked={settings.auto_close} /> Clore les créneaux automatiquement à leur fin</label>
+      </div>
+      <p class="muted small">
+        Un créneau prévu s'ouvre seul à l'approche de son début et reçoit les badges, même si l'écran d'émargement n'est pas affiché.
+        La clôture automatique marque absents les étudiants attendus qui n'ont pas badgé (annulable en rouvrant le créneau).
+      </p>
     </section>
     <div><button class="primary" onclick={save}>Enregistrer les réglages</button></div>
   {/if}

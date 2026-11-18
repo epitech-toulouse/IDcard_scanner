@@ -22,6 +22,7 @@ export const api = {
   updateStudent: (id: T.Id, input: T.StudentInput, groupIds: T.Id[]) =>
     invoke<T.Student>("update_student", { id, input, groupIds }),
   deleteStudent: (id: T.Id) => invoke<void>("delete_student", { id }),
+  bulkStudents: (ids: T.Id[], action: T.BulkAction) => invoke<number>("bulk_students", { ids, action }),
   linkCard: (uid: string, studentId: T.Id) => invoke<void>("link_card", { uid, studentId }),
   unlinkCard: (uid: string) => invoke<void>("unlink_card", { uid }),
 
@@ -57,6 +58,7 @@ export const api = {
   // Lecteur
   readerStatus: () => invoke<T.ReadersStatus>("reader_status"),
   injectCard: (uid: string) => invoke<void>("inject_card", { uid }),
+  setCardTest: (enabled: boolean) => invoke<void>("set_card_test", { enabled }),
 
   // Réglages
   getSettings: () => invoke<T.Settings>("get_settings"),
@@ -71,5 +73,12 @@ export const events = {
     listen<T.ScanOutcome>("card-scanned", (e) => cb(e.payload)),
   onReader: (cb: (s: T.ReadersStatus) => void): Promise<UnlistenFn> =>
     listen<T.ReadersStatus>("reader-status", (e) => cb(e.payload)),
+  onCardTest: (cb: (d: T.CardDiagnostic) => void): Promise<UnlistenFn> =>
+    listen<T.CardDiagnostic>("card-test", (e) => cb(e.payload)),
+  onSessionAuto: (cb: (e: T.AutoEvent) => void): Promise<UnlistenFn> =>
+    listen<T.AutoEvent>("session-auto", (e) => cb(e.payload)),
+  /** Le créneau actif a changé tout seul (le précédent est terminé, un autre est en cours). */
+  onActiveSession: (cb: (id: T.Id | null) => void): Promise<UnlistenFn> =>
+    listen<T.Id | null>("active-session", (e) => cb(e.payload)),
   onError: (cb: (msg: string) => void): Promise<UnlistenFn> => listen<string>("app-error", (e) => cb(e.payload)),
 };

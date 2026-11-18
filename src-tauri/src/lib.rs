@@ -4,13 +4,14 @@
 mod commands;
 
 use badgeuse_core::attendance::{self, ScanOutcome};
+use badgeuse_core::domain::AutoAction;
 use badgeuse_core::model::Id;
-use badgeuse_core::nfc::{self, CardInfo, Feedback, LoopOptions, MockHandle, MockReader, ReaderKind, ReaderStatus, ReadersStatus};
+use badgeuse_core::nfc::{self, CardDiagnostic, CardInfo, Feedback, LoopOptions, MockHandle, MockReader, ReaderKind, ReaderStatus, ReadersStatus};
 use badgeuse_core::db::{self, Connection};
-use badgeuse_core::{sessions, settings};
+use badgeuse_core::{sessions, settings, students};
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -21,6 +22,9 @@ pub struct AppState {
     /// État de chaque lecteur, indexé par son identifiant stable.
     readers: Arc<Mutex<BTreeMap<String, ReaderStatus>>>,
     feedback: Arc<AtomicBool>,
+    pub(crate) beep: Arc<AtomicU8>,
+    /// Mode « Test cartes » : les badges sont diagnostiqués, jamais enregistrés.
+    pub(crate) card_test: Arc<AtomicBool>,
     mock: Option<MockHandle>,
     db_path: PathBuf,
 }
@@ -69,14 +73,36 @@ pub(crate) fn process_uid(app: &AppHandle, db: &Mutex<Connection>, active: Optio
     }
 }
 
-fn on_card(app: &AppHandle, state: &AppState, card: &CardInfo) -> Feedback {
+fn on_card(app: &AppHandle, state: &AppState, reader: &str, card: &CardInfo) -> Feedback {
     let uid = card.uid_hex();
-    tracing::info!("carte {uid} (SAK {:?})", card.sak);
+    tracing::info!("[{reader}] carte {uid} (SAK {:?}, ATR {:02X?})", card.sak, card.atr);
+    if state.card_test.load(Ordering::Relaxed) {
+        return on_test_card(app, state, reader, card);
+    }
     if card.is_random_uid() {
         let _ = app.emit("card-scanned", &ScanOutcome::RandomUid { uid });
         return Feedback::Error;
     }
     process_uid(app, &state.db, state.active(), &uid)
+}
+
+/// Mode test : diagnostic de la carte vers le front (`card-test`), sans toucher aux présences.
+fn on_test_card(app: &AppHandle, state: &AppState, reader: &str, card: &CardInfo) -> Feedback {
+    let student = if card.is_random_uid() {
+        None
+    } else {
+        match students::find_by_card(&state.db(), &card.uid_hex()) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = app.emit("app-error", e.to_string());
+                return Feedback::Error;
+            }
+        }
+    };
+    let diag = CardDiagnostic::new(card, reader, student, db::now());
+    let fb = if diag.random_uid { Feedback::Error } else if diag.student.is_some() { Feedback::Ok } else { Feedback::Warn };
+    let _ = app.emit("card-test", &diag);
+    fb
 }
 
 /// Enregistre l'état d'un lecteur et réémet la vue agrégée vers le front.
@@ -99,16 +125,71 @@ where
         .name(format!("nfc:{id}"))
         .spawn(move || {
             let state = app.state::<AppState>();
-            let opts = LoopOptions { id, feedback: state.feedback.clone(), ..Default::default() };
+            let reader = id.clone();
+            let opts = LoopOptions { id, feedback: state.feedback.clone(), beep: state.beep.clone(), ..Default::default() };
             let status_app = app.clone();
             nfc::run_loop(
                 open,
                 opts,
                 move |st| publish_status(&status_app, st),
-                |card| on_card(&app, &state, card),
+                |card| on_card(&app, &state, &reader, card),
             );
         })
         .expect("thread lecteur");
+}
+
+/// Ouvre / clôt les créneaux à l'heure (réglages « auto_open » / « auto_close »), toutes les 20 s.
+/// Le créneau actif est ensuite réévalué (`domain::pick_active`) : il suit le créneau ouvert en cours.
+fn start_scheduler(app: AppHandle) {
+    std::thread::Builder::new()
+        .name("sessions-auto".into())
+        .spawn(move || {
+            let state = app.state::<AppState>();
+            // Créneaux déjà clos automatiquement : si le prof les rouvre, on ne les reclôt pas.
+            let mut closed: HashSet<Id> = HashSet::new();
+            loop {
+                let now = db::now();
+                let result = {
+                    let conn = state.db();
+                    settings::load(&conn).and_then(|cfg| {
+                        if !cfg.auto_open && !cfg.auto_close {
+                            return Ok(vec![]);
+                        }
+                        let lead = cfg.auto_open.then_some(cfg.auto_open_lead_min);
+                        attendance::run_auto(&conn, now, lead, cfg.auto_close, &closed)
+                    })
+                };
+                match result {
+                    Ok(events) => {
+                        for ev in events {
+                            if ev.action == AutoAction::Close {
+                                closed.insert(ev.session_id);
+                                if state.active() == Some(ev.session_id) {
+                                    state.set_active(None);
+                                }
+                            }
+                            tracing::info!("créneau {} « {} » : {:?} automatique", ev.session_id, ev.title, ev.action);
+                            let _ = app.emit("session-auto", &ev);
+                        }
+                    }
+                    Err(e) => tracing::error!("ouverture/clôture automatique : {e}"),
+                }
+                // Créneau actif : passe au créneau ouvert en cours dès que l'actuel est terminé
+                // (y compris un créneau ouvert en avance pendant que le précédent tournait encore).
+                let current = state.active();
+                match sessions::resolve_active(&state.db(), current, now) {
+                    Ok(next) if next != current => {
+                        tracing::info!("créneau actif : {current:?} → {next:?}");
+                        state.set_active(next);
+                        let _ = app.emit("active-session", next);
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::error!("créneau actif : {e}"),
+                }
+                std::thread::sleep(std::time::Duration::from_secs(20));
+            }
+        })
+        .expect("thread créneaux automatiques");
 }
 
 /// Démarre la lecture NFC : un thread par lecteur, avec prise en compte des
@@ -192,10 +273,13 @@ pub fn run() {
                 active_session: Arc::new(Mutex::new(active)),
                 readers: Arc::new(Mutex::new(BTreeMap::new())),
                 feedback: Arc::new(AtomicBool::new(cfg.reader_feedback)),
+                beep: Arc::new(AtomicU8::new(cfg.reader_beep.as_u8())),
+                card_test: Arc::new(AtomicBool::new(false)),
                 mock,
                 db_path,
             });
             start_readers(app.handle().clone(), kind, mock_reader);
+            start_scheduler(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -210,6 +294,7 @@ pub fn run() {
             commands::create_student,
             commands::update_student,
             commands::delete_student,
+            commands::bulk_students,
             commands::link_card,
             commands::unlink_card,
             commands::import_preview,
@@ -233,6 +318,7 @@ pub fn run() {
             commands::export_period,
             commands::reader_status,
             commands::inject_card,
+            commands::set_card_test,
             commands::get_settings,
             commands::save_settings,
             commands::backup_db,

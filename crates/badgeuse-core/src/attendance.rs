@@ -31,7 +31,8 @@ impl ScanOutcome {
     pub fn feedback(&self) -> crate::nfc::Feedback {
         use crate::nfc::Feedback;
         match self {
-            ScanOutcome::Recorded { status: Status::Present, .. } | ScanOutcome::AlreadyScanned { .. } => Feedback::Ok,
+            ScanOutcome::Recorded { status: Status::Present, .. } => Feedback::Ok,
+            ScanOutcome::AlreadyScanned { .. } => Feedback::Silent,
             ScanOutcome::Recorded { .. } => Feedback::Warn,
             ScanOutcome::Identified { student: Some(_), .. } => Feedback::Ok,
             _ => Feedback::Error,
@@ -149,6 +150,49 @@ pub fn reopen(c: &Connection, session_id: Id) -> Result<()> {
     Ok(())
 }
 
+/// Créneau ouvert ou clos automatiquement, pour notifier le front.
+#[derive(Debug, Clone, Serialize)]
+pub struct AutoEvent {
+    pub session_id: Id,
+    pub title: String,
+    pub action: domain::AutoAction,
+    /// Absents ajoutés à la clôture.
+    pub absents: usize,
+}
+
+/// Ouvre / clôt les créneaux dont c'est l'heure. `skip` : créneaux déjà traités (ex. clôturés
+/// automatiquement puis rouverts à la main par le prof : on ne les reclôt pas).
+pub fn run_auto(
+    c: &Connection,
+    now: NaiveDateTime,
+    open_lead_min: Option<i64>,
+    auto_close: bool,
+    skip: &std::collections::HashSet<Id>,
+) -> Result<Vec<AutoEvent>> {
+    let candidates: Vec<Session> = {
+        let mut st = c.prepare(
+            "SELECT id FROM sessions WHERE state = 'planned' OR (state = 'open' AND ?1) ORDER BY starts_at",
+        )?;
+        let ids = st.query_map([auto_close], |r| r.get::<_, Id>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        ids.into_iter().map(|id| sessions::get(c, id)).collect::<Result<_>>()?
+    };
+    let mut out = vec![];
+    for s in candidates.into_iter().filter(|s| !skip.contains(&s.id)) {
+        let Some(action) = domain::auto_action(s.state, s.starts_at, s.ends_at, now, open_lead_min, auto_close) else {
+            continue;
+        };
+        let absents = match action {
+            domain::AutoAction::Open => {
+                open(c, s.id)?;
+                0
+            }
+            domain::AutoAction::Close => close(c, s.id)?,
+        };
+        out.push(AutoEvent { session_id: s.id, title: s.title, action, absents });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -190,6 +234,25 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn auto_open_then_close() {
+        let (c, sid, _, _) = fixture();
+        let none = std::collections::HashSet::new();
+        assert!(run_auto(&c, dt("2026-11-17 07:40"), Some(10), true, &none).unwrap().is_empty());
+        let ev = run_auto(&c, dt("2026-11-17 07:52"), Some(10), true, &none).unwrap();
+        assert_eq!((ev.len(), ev[0].action), (1, domain::AutoAction::Open));
+        assert_eq!(sessions::get(&c, sid).unwrap().state, SessionState::Open);
+        // Pendant le créneau : rien à faire ; clôture désactivée : rien non plus après la fin.
+        assert!(run_auto(&c, dt("2026-11-17 09:00"), Some(10), true, &none).unwrap().is_empty());
+        assert!(run_auto(&c, dt("2026-11-17 10:05"), Some(10), false, &none).unwrap().is_empty());
+        // Créneau déjà traité (rouvert à la main) : ignoré.
+        let skip = std::collections::HashSet::from([sid]);
+        assert!(run_auto(&c, dt("2026-11-17 10:05"), Some(10), true, &skip).unwrap().is_empty());
+        let ev = run_auto(&c, dt("2026-11-17 10:05"), Some(10), true, &none).unwrap();
+        assert_eq!((ev[0].action, ev[0].absents), (domain::AutoAction::Close, 2));
+        assert_eq!(sessions::get(&c, sid).unwrap().state, SessionState::Closed);
+    }
+
+    #[test]
     fn full_flow() {
         let (c, sid, _, [a, b, ch]) = fixture();
         // Pas encore ouvert
@@ -202,7 +265,9 @@ pub(crate) mod tests {
         assert!(matches!(o, ScanOutcome::Recorded { status: Status::Late, .. }));
         assert_eq!(o.feedback(), crate::nfc::Feedback::Warn);
         // Deuxième passage
-        assert!(matches!(record_scan(&c, sid, "04:A1", dt("2026-11-17 08:20")).unwrap(), ScanOutcome::AlreadyScanned { status: Status::Late, .. }));
+        let o = record_scan(&c, sid, "04:A1", dt("2026-11-17 08:20")).unwrap();
+        assert!(matches!(o, ScanOutcome::AlreadyScanned { status: Status::Late, .. }));
+        assert_eq!(o.feedback(), crate::nfc::Feedback::Silent); // déjà validé : pas de bip
         // Chloé n'est pas en TD1
         assert!(matches!(record_scan(&c, sid, "04:C3", dt("2026-11-17 08:02")).unwrap(), ScanOutcome::NotExpected { .. }));
         // Ajout manuel de Chloé

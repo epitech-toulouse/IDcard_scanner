@@ -1,4 +1,5 @@
-//! Exports Excel : feuille d'un créneau, et récapitulatif d'une période avec statistiques.
+//! Exports : feuille d'un créneau, et récapitulatif d'une période avec statistiques.
+//! Le format suit l'extension du fichier : `.csv` (pour Excel en français : `;`, UTF-8 avec BOM), sinon xlsx.
 
 use crate::domain::Tally;
 use crate::model::*;
@@ -8,7 +9,19 @@ use rusqlite::Connection;
 use rust_xlsxwriter::{Color, Format, FormatAlign, FormatBorder, Workbook, Worksheet};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::io::Write;
 use std::path::Path;
+
+fn is_csv(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv"))
+}
+
+/// CSV lisible directement par Excel en français : séparateur `;`, UTF-8 avec BOM.
+fn csv_writer(path: &Path) -> Result<csv::Writer<std::fs::File>> {
+    let mut f = std::fs::File::create(path)?;
+    f.write_all(b"\xEF\xBB\xBF")?;
+    Ok(csv::WriterBuilder::new().delimiter(b';').from_writer(f))
+}
 
 fn status_color(s: Option<Status>) -> Color {
     match s {
@@ -72,9 +85,30 @@ fn write_legend(ws: &mut Worksheet, row: u32) -> Result<()> {
     Ok(())
 }
 
-/// Feuille d'émargement d'un créneau.
+const SESSION_HEADERS: [&str; 9] = ["Nom", "Prénom", "N° étudiant", "Groupe(s)", "Statut", "Heure", "Source", "Motif", "Attendu"];
+/// Colonne « Statut » (colorée en xlsx).
+const STATUS_COL: usize = 4;
+
+fn session_cells(r: &AttendanceRow) -> [String; 9] {
+    [
+        r.student.last_name.to_uppercase(),
+        r.student.first_name.clone(),
+        r.student.student_number.clone(),
+        r.groups.clone(),
+        r.status.map(Status::label).unwrap_or("Non badgé").into(),
+        r.scanned_at.map(|t| t.format("%H:%M").to_string()).unwrap_or_default(),
+        r.source.map(Source::label).unwrap_or("").into(),
+        r.reason.clone().unwrap_or_default(),
+        if r.expected { "Oui" } else { "Non" }.into(),
+    ]
+}
+
+/// Feuille d'émargement d'un créneau (xlsx, ou CSV si `path` finit par `.csv`).
 pub fn export_session(c: &Connection, session_id: Id, path: &Path) -> Result<()> {
     let d = sessions::detail(c, session_id)?;
+    if is_csv(path) {
+        return export_session_csv(&d, path);
+    }
     let s = &d.session.session;
     let mut wb = Workbook::new();
     let ws = wb.add_worksheet();
@@ -109,24 +143,14 @@ pub fn export_session(c: &Connection, session_id: Id, path: &Path) -> Result<()>
     )?;
 
     let hr = 5;
-    write_headers(
-        ws,
-        hr,
-        &["Nom", "Prénom", "N° étudiant", "Groupe(s)", "Statut", "Heure", "Source", "Motif", "Attendu"],
-        &[22.0, 18.0, 14.0, 14.0, 18.0, 8.0, 10.0, 30.0, 9.0],
-    )?;
+    write_headers(ws, hr, &SESSION_HEADERS, &[22.0, 18.0, 14.0, 14.0, 18.0, 8.0, 10.0, 30.0, 9.0])?;
     let cf = cell_fmt();
     for (i, r) in d.rows.iter().enumerate() {
         let row = hr + 1 + i as u32;
-        ws.write_string_with_format(row, 0, r.student.last_name.to_uppercase(), &cf)?;
-        ws.write_string_with_format(row, 1, &r.student.first_name, &cf)?;
-        ws.write_string_with_format(row, 2, &r.student.student_number, &cf)?;
-        ws.write_string_with_format(row, 3, &r.groups, &cf)?;
-        ws.write_string_with_format(row, 4, r.status.map(Status::label).unwrap_or("Non badgé"), &status_fmt(r.status))?;
-        ws.write_string_with_format(row, 5, r.scanned_at.map(|t| t.format("%H:%M").to_string()).unwrap_or_default(), &cf)?;
-        ws.write_string_with_format(row, 6, r.source.map(Source::label).unwrap_or(""), &cf)?;
-        ws.write_string_with_format(row, 7, r.reason.as_deref().unwrap_or(""), &cf)?;
-        ws.write_string_with_format(row, 8, if r.expected { "Oui" } else { "Non" }, &cf)?;
+        for (j, v) in session_cells(r).iter().enumerate() {
+            let f = if j == STATUS_COL { status_fmt(r.status) } else { cf.clone() };
+            ws.write_string_with_format(row, j as u16, v, &f)?;
+        }
     }
     let last = hr + d.rows.len() as u32;
     if !d.rows.is_empty() {
@@ -134,6 +158,20 @@ pub fn export_session(c: &Connection, session_id: Id, path: &Path) -> Result<()>
     }
     ws.set_freeze_panes(hr + 1, 0)?;
     wb.save(path)?;
+    Ok(())
+}
+
+/// CSV d'un créneau : une ligne par étudiant, précédée du titre et de la date du créneau.
+fn export_session_csv(d: &SessionDetail, path: &Path) -> Result<()> {
+    let s = &d.session.session;
+    let mut w = csv_writer(path)?;
+    w.write_record(["Créneau", "Début"].iter().chain(SESSION_HEADERS.iter()))?;
+    let (title, start) = (s.title.as_str(), fmt_dt(s.starts_at));
+    for r in &d.rows {
+        let cells = session_cells(r);
+        w.write_record([title, start.as_str()].into_iter().chain(cells.iter().map(String::as_str)))?;
+    }
+    w.flush()?;
     Ok(())
 }
 
@@ -180,8 +218,29 @@ fn filter_students(c: &Connection, f: &PeriodFilter) -> Result<Option<HashSet<Id
     Ok(Some(set))
 }
 
-/// Récapitulatif sur une période : matrice étudiants × créneaux + statistiques.
-pub fn export_period(c: &Connection, f: &PeriodFilter, path: &Path) -> Result<ExportSummary> {
+/// Données d'une période : créneaux (chronologiques) et étudiants concernés (triés par nom).
+struct Period {
+    cols: Vec<Col>,
+    students: Vec<(Student, String)>,
+}
+
+impl Period {
+    /// Bilan d'un étudiant. Créneau pas encore clos et étudiant non badgé : non compté.
+    fn tally(&self, sid: Id) -> Tally {
+        let mut t = Tally::default();
+        for col in &self.cols {
+            if let Some(st) = col.cells.get(&sid) {
+                if st.is_none() && col.session.state != SessionState::Closed {
+                    continue;
+                }
+                t.add(*st);
+            }
+        }
+        t
+    }
+}
+
+fn gather(c: &Connection, f: &PeriodFilter) -> Result<Period> {
     let wanted = filter_students(c, f)?;
     let mut list = sessions::list(c, f.from, f.to)?;
     list.reverse(); // ordre chronologique
@@ -204,24 +263,48 @@ pub fn export_period(c: &Connection, f: &PeriodFilter, path: &Path) -> Result<Ex
             cols.push(Col { session: sr.session, cells });
         }
     }
-    let students: Vec<(Student, String)> = students.into_values().collect();
+    Ok(Period { cols, students: students.into_values().collect() })
+}
 
+/// Récapitulatif sur une période (xlsx : matrice étudiants × créneaux + statistiques ;
+/// CSV si `path` finit par `.csv` : matrice et bilan par étudiant, sans les statistiques par groupe).
+pub fn export_period(c: &Connection, f: &PeriodFilter, path: &Path) -> Result<ExportSummary> {
+    let data = gather(c, f)?;
+    if is_csv(path) {
+        export_period_csv(&data, path)?;
+    } else {
+        export_period_xlsx(&data, f, path)?;
+    }
+    Ok(ExportSummary { sessions: data.cols.len(), students: data.students.len() })
+}
+
+fn export_period_csv(data: &Period, path: &Path) -> Result<()> {
+    let mut w = csv_writer(path)?;
+    let mut head: Vec<String> = ["Nom", "Prénom", "N° étudiant", "Groupe(s)"].map(String::from).to_vec();
+    head.extend(data.cols.iter().map(|c| format!("{} {}", fmt_dt(c.session.starts_at), c.session.title)));
+    head.extend(["Créneaux", "Présent", "Retard", "Abs. justifiée", "Abs. non justifiée", "Taux de présence (%)"].map(String::from));
+    w.write_record(&head)?;
+    for (s, groups) in &data.students {
+        let t = data.tally(s.id);
+        let mut rec = vec![s.last_name.to_uppercase(), s.first_name.clone(), s.student_number.clone(), groups.clone()];
+        rec.extend(data.cols.iter().map(|c| match c.cells.get(&s.id) {
+            Some(st) => st.map(Status::code).unwrap_or("·").to_string(),
+            None => String::new(),
+        }));
+        rec.extend([t.sessions, t.present, t.late, t.excused, t.absent].map(|v| v.to_string()));
+        rec.push(format!("{:.0}", t.attendance_rate() * 100.0));
+        w.write_record(&rec)?;
+    }
+    w.flush()?;
+    Ok(())
+}
+
+fn export_period_xlsx(data: &Period, f: &PeriodFilter, path: &Path) -> Result<()> {
+    let (cols, students) = (&data.cols, &data.students);
+    let tally_of = |sid: Id| data.tally(sid);
     let mut wb = Workbook::new();
     let cf = cell_fmt();
     let pct = cf.clone().set_num_format("0%");
-    let tally_of = |sid: Id| -> Tally {
-        let mut t = Tally::default();
-        for col in &cols {
-            if let Some(st) = col.cells.get(&sid) {
-                // Créneau pas encore clos et étudiant non badgé : non compté.
-                if st.is_none() && col.session.state != SessionState::Closed {
-                    continue;
-                }
-                t.add(*st);
-            }
-        }
-        t
-    };
 
     // --- Feuille 1 : matrice ---
     {
@@ -322,7 +405,7 @@ pub fn export_period(c: &Connection, f: &PeriodFilter, path: &Path) -> Result<Ex
     }
 
     wb.save(path)?;
-    Ok(ExportSummary { sessions: cols.len(), students: students.len() })
+    Ok(())
 }
 
 #[cfg(test)]
@@ -360,5 +443,32 @@ mod tests {
         assert_eq!(m.get_value((4, 5)), Some(&Data::Float(1.0)));
         let st = wb.worksheet_range("Statistiques").unwrap();
         assert_eq!(st.get_value((3, 8)), Some(&Data::Float(1.0))); // Martin : 1 absence non justifiée
+    }
+
+    #[test]
+    fn csv_exports() {
+        let (c, sid, _, _) = fixture();
+        attendance::open(&c, sid).unwrap();
+        attendance::record_scan(&c, sid, "04:A1", dt("2026-11-17 08:20")).unwrap();
+        attendance::close(&c, sid).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+
+        let p1 = dir.path().join("creneau.CSV");
+        export_session(&c, sid, &p1).unwrap();
+        let txt = std::fs::read_to_string(&p1).unwrap();
+        assert!(txt.starts_with('\u{FEFF}'), "BOM UTF-8 pour Excel");
+        let lines: Vec<&str> = txt.trim_start_matches('\u{FEFF}').lines().collect();
+        assert_eq!(lines[0], "Créneau;Début;Nom;Prénom;N° étudiant;Groupe(s);Statut;Heure;Source;Motif;Attendu");
+        assert_eq!(lines[1], "Réseaux;17/11/2026 08:00;DUPONT;Alice;1;TD1;En retard;08:20;Badge;;Oui");
+        assert_eq!(lines[2], "Réseaux;17/11/2026 08:00;MARTIN;Bob;2;TD1;Absent;;Clôture;;Oui");
+
+        let p2 = dir.path().join("periode.csv");
+        let sum = export_period(&c, &PeriodFilter::default(), &p2).unwrap();
+        assert_eq!((sum.sessions, sum.students), (1, 2));
+        let txt = std::fs::read_to_string(&p2).unwrap();
+        let lines: Vec<&str> = txt.trim_start_matches('\u{FEFF}').lines().collect();
+        assert!(lines[0].ends_with(";17/11/2026 08:00 Réseaux;Créneaux;Présent;Retard;Abs. justifiée;Abs. non justifiée;Taux de présence (%)"));
+        assert_eq!(lines[1], "DUPONT;Alice;1;TD1;R;1;0;1;0;0;100");
+        assert_eq!(lines[2], "MARTIN;Bob;2;TD1;A;1;0;0;0;1;0");
     }
 }

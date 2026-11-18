@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { api } from "../lib/api";
   import { confirmAction, guard, navigate, toast } from "../lib/app.svelte";
-  import { exportSessionXlsx } from "../lib/actions";
+  import { exportSession } from "../lib/actions";
   import { addDays, fmtDate, fmtTime, parseNaive, startOfWeek } from "../lib/format";
   import SessionForm from "../components/SessionForm.svelte";
   import { STATE_LABEL, type SessionRow } from "../lib/types";
@@ -103,7 +103,8 @@
                   </button>
                   <button class="link" onclick={() => (editing = s)}>Modifier</button>
                   <button class="link" title="Même créneau la semaine suivante" onclick={() => duplicate(s)}>+7 j</button>
-                  <button class="link" onclick={() => exportSessionXlsx(s)}>Excel</button>
+                  <button class="link" onclick={() => exportSession(s, "xlsx")}>Excel</button>
+                  <button class="link" onclick={() => exportSession(s, "csv")}>CSV</button>
                   <button class="link danger" onclick={() => remove(s)}>✕</button>
                 </td>
               </tr>

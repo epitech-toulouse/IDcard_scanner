@@ -2,11 +2,13 @@
   import { onMount } from "svelte";
   import { api, events } from "../lib/api";
   import { confirmAction, guard, navigate, reader, toast } from "../lib/app.svelte";
-  import { exportSessionXlsx } from "../lib/actions";
-  import { fmtDate, fmtRange, fmtTime, isToday, toNaive } from "../lib/format";
+  import { exportSession } from "../lib/actions";
+  import { fmtRange, fmtTime, isToday, toNaive } from "../lib/format";
   import Modal from "../components/Modal.svelte";
   import StatusPill from "../components/StatusPill.svelte";
   import StudentPicker from "../components/StudentPicker.svelte";
+  import Projection from "../components/Projection.svelte";
+  import { describeScan, studentName as name } from "../lib/scan";
   import {
     SOURCE_LABEL, STATE_LABEL, STATUS_LABEL,
     type AttendanceRow, type Id, type ScanOutcome, type SessionDetail, type SessionRow, type Status, type Student,
@@ -33,9 +35,8 @@
   let here = $derived(detail?.rows.filter((r) => r.status === "present" || r.status === "late").length ?? 0);
   let missing = $derived(expectedRows.filter((r) => !r.status).length);
   let barPct = $derived(s && s.counts.expected ? Math.min(100, (100 * here) / s.counts.expected) : 0);
+  let recent = $derived(feed.filter((f, i) => (f.cls === "present" || f.cls === "late") && feed.findIndex((g) => g.title === f.title) === i).slice(0, 8));
   let shownRows = $derived(onlyMissing ? (detail?.rows.filter((r) => !r.status) ?? []) : (detail?.rows ?? []));
-
-  const name = (st: Student) => `${st.first_name} ${st.last_name.toUpperCase()}`;
 
   async function load() {
     if (sessionId === null) return;
@@ -57,8 +58,12 @@
       if (detail?.session.state === "open") await api.setActiveSession(sessionId);
     })();
     const off = events.onCard(onCard);
+    const offAuto = events.onSessionAuto((e) => {
+      if (e.session_id === sessionId) load();
+    });
     return () => {
       off.then((f) => f());
+      offAuto.then((f) => f());
       clearTimeout(flashTimer);
     };
   });
@@ -72,31 +77,10 @@
 
   async function onCard(o: ScanOutcome) {
     if (sessionId === null) return;
-    switch (o.kind) {
-      case "recorded":
-        push(o.status, name(o.student), o.status === "late" ? `En retard · ${fmtTime(o.scanned_at)}` : `Présent · ${fmtTime(o.scanned_at)}`);
-        break;
-      case "already_scanned":
-        push(o.status, name(o.student), `Déjà enregistré (${STATUS_LABEL[o.status].toLowerCase()})`);
-        break;
-      case "not_expected":
-        push("absent", name(o.student), "N'est pas attendu sur ce créneau");
-        notExpected = o.student;
-        break;
-      case "unknown_card":
-        push("absent", "Carte inconnue", o.uid);
-        unknownUid = o.uid;
-        break;
-      case "random_uid":
-        push("absent", "Carte non utilisable", "UID aléatoire (téléphone, carte bancaire…)");
-        break;
-      case "session_not_open":
-        push("absent", "Émargement fermé", "Ouvrez le créneau pour enregistrer les badges");
-        break;
-      case "identified":
-        push(o.student ? "present" : "absent", o.student ? name(o.student) : "Carte inconnue", "Aucun créneau ouvert");
-        break;
-    }
+    const m = describeScan(o);
+    push(m.cls, m.title, m.sub);
+    if (o.kind === "not_expected") notExpected = o.student;
+    if (o.kind === "unknown_card") unknownUid = o.uid;
     await load();
   }
 
@@ -194,11 +178,13 @@
       <span class="pill {s.state}">{STATE_LABEL[s.state]}</span>
       {#if s.state === "open"}
         <button onclick={() => (projection = true)}>Mode projection</button>
+        <button onclick={() => navigate("affichage")} title="Plein écran qui suit tout seul les créneaux ouverts et clos">Affichage automatique</button>
         <button class="primary" onclick={closeIt}>Clore l'émargement</button>
       {:else}
         <button class="primary" onclick={openIt}>{s.state === "closed" ? "Rouvrir" : "Ouvrir l'émargement"}</button>
       {/if}
-      <button onclick={() => exportSessionXlsx(s)}>Export Excel</button>
+      <button onclick={() => exportSession(s, "xlsx")}>Export Excel</button>
+      <button onclick={() => exportSession(s, "csv")}>Export CSV</button>
     </div>
   </div>
 
@@ -284,16 +270,7 @@
   </div>
 
   {#if projection}
-    <div class="projection">
-      <button class="exit" onclick={() => (projection = false)}>Quitter la projection</button>
-      <h1>{s.title}</h1>
-      <p>{fmtDate(s.starts_at)} · {fmtTime(s.starts_at)} – {fmtTime(s.ends_at)}{s.room ? ` · ${s.room}` : ""}</p>
-      <div class="pbanner {flash?.cls ?? 'idle'}">
-        {#if flash}<div class="pwho">{flash.title}</div><div class="psub">{flash.sub}</div>
-        {:else}<div class="pwho">Badgez votre carte étudiant</div>{/if}
-      </div>
-      <div class="pcount"><strong>{here}</strong> / {s.counts.expected} présents</div>
-    </div>
+    <Projection session={s} {here} {flash} {recent} onexit={() => (projection = false)} />
   {/if}
 
   {#if unknownUid}
@@ -345,16 +322,4 @@
   aside h2 { margin-bottom: 0.5rem; }
   .feed { padding: 0.45rem 0.7rem; border-radius: 8px; margin-bottom: 0.4rem; border-left: 4px solid var(--border); background: var(--surface); }
 
-  .projection { position: fixed; inset: 0; z-index: 40; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.2rem; text-align: center; padding: 2rem; }
-  .projection h1 { font-size: 2.6rem; }
-  .projection p { font-size: 1.3rem; color: var(--muted); }
-  .exit { position: absolute; top: 1rem; right: 1rem; }
-  .pbanner { width: min(1000px, 92vw); min-height: 260px; border-radius: 20px; display: flex; flex-direction: column; justify-content: center; border: 3px solid var(--border); background: var(--surface); transition: background 0.2s; }
-  .pbanner.present { border-color: var(--present); }
-  .pbanner.late { border-color: var(--late); }
-  .pbanner.absent { border-color: var(--absent); }
-  .pwho { font-size: 4rem; font-weight: 800; }
-  .psub { font-size: 2rem; }
-  .pcount { font-size: 2rem; }
-  .pcount strong { font-size: 3rem; }
 </style>

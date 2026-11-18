@@ -7,17 +7,19 @@
 
 #[allow(dead_code)]
 pub(crate) mod acr122;
+pub mod diagnostic;
 pub mod mock;
 #[cfg(feature = "pcsc")]
 pub mod pcsc;
 #[cfg(feature = "usb")]
 pub mod usb;
 
+pub use diagnostic::CardDiagnostic;
 pub use mock::{MockHandle, MockReader};
 
 use serde::Serialize;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,11 +27,13 @@ pub struct CardInfo {
     pub uid: Vec<u8>,
     /// Octet SAK si le backend le connaît (USB direct).
     pub sak: Option<u8>,
+    /// ATR reconstruit par le lecteur, si le backend le connaît (PC/SC).
+    pub atr: Option<Vec<u8>>,
 }
 
 impl CardInfo {
     pub fn new(uid: Vec<u8>) -> Self {
-        CardInfo { uid, sak: None }
+        CardInfo { uid, sak: None, atr: None }
     }
     /// Format canonique stocké en base : « 04:24:A5:82:E6:19:90 ».
     pub fn uid_hex(&self) -> String {
@@ -58,8 +62,47 @@ pub fn parse_uid(s: &str) -> Option<Vec<u8>> {
 #[serde(rename_all = "lowercase")]
 pub enum Feedback {
     Ok,
+    /// Carte déjà validée sur ce créneau : LED verte, sans bip.
+    Silent,
     Warn,
     Error,
+}
+
+/// Niveau du bip du lecteur (le volume du buzzer n'est pas réglable sur l'ACR122U).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Beep {
+    #[default]
+    Normal,
+    Discreet,
+    Silent,
+}
+
+impl Beep {
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Beep::Discreet,
+            2 => Beep::Silent,
+            _ => Beep::Normal,
+        }
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Beep::Normal => "normal",
+            Beep::Discreet => "discreet",
+            Beep::Silent => "silent",
+        }
+    }
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "discreet" => Beep::Discreet,
+            "silent" => Beep::Silent,
+            _ => Beep::Normal,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -77,7 +120,7 @@ pub trait CardReader: Send {
     /// n'est renvoyée qu'une fois.
     fn wait_card(&mut self, timeout: Duration) -> Result<Option<CardInfo>, NfcError>;
     /// Retour LED/bip, au mieux.
-    fn feedback(&mut self, _fb: Feedback) {}
+    fn feedback(&mut self, _fb: Feedback, _beep: Beep) {}
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,6 +235,8 @@ pub struct LoopOptions {
     pub poll: Duration,
     pub retry: Duration,
     pub feedback: Arc<AtomicBool>,
+    /// Niveau du bip (`Beep::as_u8`), modifiable à chaud.
+    pub beep: Arc<AtomicU8>,
     pub stop: Arc<AtomicBool>,
 }
 
@@ -203,6 +248,7 @@ impl Default for LoopOptions {
             poll: Duration::from_millis(300),
             retry: Duration::from_secs(2),
             feedback: Arc::new(AtomicBool::new(true)),
+            beep: Arc::new(AtomicU8::new(Beep::Normal.as_u8())),
             stop: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -261,7 +307,7 @@ pub fn run_loop(
                     }
                     let fb = on_card(&card);
                     if opts.feedback.load(Ordering::Relaxed) {
-                        reader.feedback(fb);
+                        reader.feedback(fb, Beep::from_u8(opts.beep.load(Ordering::Relaxed)));
                     }
                 }
                 Err(e) => {

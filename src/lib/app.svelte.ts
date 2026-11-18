@@ -60,6 +60,9 @@ export async function guard<T>(p: Promise<T>): Promise<T | undefined> {
 
 export const SPREADSHEETS = [{ name: "Tableur (CSV, Excel, ODS)", extensions: ["csv", "xlsx", "xls", "ods", "txt", "tsv"] }];
 export const XLSX = [{ name: "Classeur Excel", extensions: ["xlsx"] }];
+export const CSV = [{ name: "CSV (séparateur ;)", extensions: ["csv"] }];
+export type ExportFormat = "xlsx" | "csv";
+export const EXPORT_FILTERS: Record<ExportFormat, typeof XLSX> = { xlsx: XLSX, csv: CSV };
 export const DB = [{ name: "Base Badgeuse", extensions: ["db", "sqlite"] }];
 
 export async function pickFile(filters = SPREADSHEETS): Promise<string | null> {

@@ -39,6 +39,15 @@ export interface StudentFilter {
   include_inactive?: boolean;
 }
 
+/** Action groupée sur une sélection d'étudiants (miroir de `BulkAction`). */
+export type BulkAction =
+  | { kind: "set_active"; active: boolean }
+  | { kind: "set_cohort"; cohort_id: Id | null }
+  | { kind: "add_to_group"; group_id: Id }
+  | { kind: "remove_from_group"; group_id: Id }
+  | { kind: "unlink_cards" }
+  | { kind: "delete" };
+
 export interface Session {
   id: Id;
   title: string;
@@ -112,6 +121,18 @@ export interface Settings {
   default_duration_min: number;
   reader: "auto" | "pcsc" | "usb" | "mock";
   reader_feedback: boolean;
+  reader_beep: "normal" | "discreet" | "silent";
+  auto_open: boolean;
+  auto_open_lead_min: number;
+  auto_close: boolean;
+}
+
+// attendance::AutoEvent (événement « session-auto »)
+export interface AutoEvent {
+  session_id: Id;
+  title: string;
+  action: "open" | "close";
+  absents: number;
 }
 
 export const STATUS_LABEL: Record<Status, string> = {
@@ -122,3 +143,16 @@ export const STATUS_LABEL: Record<Status, string> = {
 };
 export const SOURCE_LABEL: Record<Source, string> = { badge: "Badge", manual: "Manuel", auto: "Clôture" };
 export const STATE_LABEL: Record<SessionState, string> = { planned: "Prévu", open: "En cours", closed: "Clos" };
+
+// nfc::CardDiagnostic (écran « Test cartes »)
+export interface CardDiagnostic {
+  uid: string;
+  uid_len: number;
+  sak: number | null;
+  atr: string | null;
+  card_type: string;
+  random_uid: boolean;
+  reader: string;
+  student: Student | null;
+  scanned_at: Naive;
+}

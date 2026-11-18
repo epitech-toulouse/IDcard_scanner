@@ -1,6 +1,6 @@
 //! Règles métier pures (sans base de données).
 
-use crate::model::Status;
+use crate::model::{SessionState, Status};
 use chrono::{Duration, NaiveDateTime};
 use serde::Serialize;
 
@@ -17,6 +17,55 @@ pub fn status_for_scan(starts_at: NaiveDateTime, late_after_min: i64, scanned_at
 /// On ne rétrograde jamais un présent/retard, mais un badge corrige une absence.
 pub fn scan_overrides(existing: Option<Status>) -> bool {
     !matches!(existing, Some(Status::Present | Status::Late))
+}
+
+/// Transition automatique d'un créneau.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AutoAction {
+    Open,
+    Close,
+}
+
+/// Ouverture auto (`open_lead_min` = avance, `None` = désactivée) : créneau prévu, de `début − avance` jusqu'à la fin (exclue) ; jamais après coup.
+/// Clôture auto (si activée) : créneau ouvert dont la fin est passée.
+pub fn auto_action(
+    state: SessionState,
+    starts_at: NaiveDateTime,
+    ends_at: NaiveDateTime,
+    now: NaiveDateTime,
+    open_lead_min: Option<i64>,
+    auto_close: bool,
+) -> Option<AutoAction> {
+    match state {
+        SessionState::Planned
+            if open_lead_min.is_some_and(|l| now >= starts_at - Duration::minutes(l.max(0))) && now < ends_at =>
+        {
+            Some(AutoAction::Open)
+        }
+        SessionState::Open if auto_close && now >= ends_at => Some(AutoAction::Close),
+        _ => None,
+    }
+}
+
+/// Créneau actif (celui qui reçoit les badges), réévalué en continu :
+/// - l'actif est gardé tant qu'il est ouvert et pas terminé ;
+/// - sinon, le créneau ouvert en cours (fin non passée) qui commence le plus tôt le remplace ;
+/// - à défaut, un actif ouvert mais terminé est gardé (retardataires, correction du prof).
+/// `current` et `open` : (id, état, début, fin).
+pub fn pick_active(
+    current: Option<(i64, SessionState, NaiveDateTime, NaiveDateTime)>,
+    open: &[(i64, SessionState, NaiveDateTime, NaiveDateTime)],
+    now: NaiveDateTime,
+) -> Option<i64> {
+    let running = |s: &(i64, SessionState, NaiveDateTime, NaiveDateTime)| s.1 == SessionState::Open && now < s.3;
+    if let Some(c) = current.filter(running) {
+        return Some(c.0);
+    }
+    if let Some(s) = open.iter().filter(|s| running(s)).min_by_key(|s| (s.2, s.0)) {
+        return Some(s.0);
+    }
+    current.filter(|c| c.1 == SessionState::Open).map(|c| c.0)
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -60,6 +109,39 @@ mod tests {
     use super::*;
     fn dt(s: &str) -> NaiveDateTime {
         NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M").unwrap()
+    }
+
+    #[test]
+    fn auto_open_close_window() {
+        use SessionState::*;
+        let (s, e) = (dt("2026-11-17 08:00"), dt("2026-11-17 10:00"));
+        assert_eq!(auto_action(Planned, s, e, dt("2026-11-17 07:49"), Some(10), false), None);
+        assert_eq!(auto_action(Planned, s, e, dt("2026-11-17 07:50"), Some(10), false), Some(AutoAction::Open));
+        assert_eq!(auto_action(Planned, s, e, dt("2026-11-17 09:59"), Some(10), false), Some(AutoAction::Open));
+        // Créneau déjà terminé : pas d'ouverture rétroactive.
+        assert_eq!(auto_action(Planned, s, e, dt("2026-11-17 10:00"), Some(10), true), None);
+        assert_eq!(auto_action(Open, s, e, dt("2026-11-17 10:00"), Some(10), false), None);
+        assert_eq!(auto_action(Open, s, e, dt("2026-11-17 10:00"), Some(10), true), Some(AutoAction::Close));
+        assert_eq!(auto_action(Open, s, e, dt("2026-11-17 09:00"), Some(10), true), None);
+        assert_eq!(auto_action(Planned, s, e, dt("2026-11-17 08:30"), None, true), None);
+        assert_eq!(auto_action(Closed, s, e, dt("2026-11-17 09:00"), Some(10), true), None);
+    }
+
+    #[test]
+    fn active_follows_running_session() {
+        use SessionState::*;
+        let a = (1, Open, dt("2026-11-17 16:25"), dt("2026-11-17 16:28"));
+        let b = (2, Open, dt("2026-11-17 16:30"), dt("2026-11-17 16:35"));
+        let open = [a, b];
+        // L'actif en cours est gardé, même si un autre a été ouvert en avance.
+        assert_eq!(pick_active(Some(a), &open, dt("2026-11-17 16:26")), Some(1));
+        // Une fois terminé, le créneau ouvert suivant prend la main.
+        assert_eq!(pick_active(Some(a), &open, dt("2026-11-17 16:29")), Some(2));
+        assert_eq!(pick_active(None, &open, dt("2026-11-17 16:29")), Some(2));
+        // Plus rien en cours : on garde l'actif ouvert (retardataires), pas un clos.
+        assert_eq!(pick_active(Some(b), &open, dt("2026-11-17 16:40")), Some(2));
+        assert_eq!(pick_active(Some((3, Closed, a.2, a.3)), &[], dt("2026-11-17 16:40")), None);
+        assert_eq!(pick_active(None, &open, dt("2026-11-17 16:40")), None);
     }
 
     #[test]

@@ -205,3 +205,16 @@ pub fn current_open(c: &Connection) -> Result<Option<Id>> {
     )
     .optional()?)
 }
+
+/// Créneau actif à retenir maintenant (voir `domain::pick_active`).
+pub fn resolve_active(c: &Connection, current: Option<Id>, now: NaiveDateTime) -> Result<Option<Id>> {
+    let key = |s: &Session| (s.id, s.state, s.starts_at, s.ends_at);
+    let cur = match current {
+        Some(id) => get(c, id).ok().map(|s| key(&s)),
+        None => None,
+    };
+    let mut st = c.prepare(&format!("SELECT {SESSION_COLS} FROM sessions WHERE state = 'open'"))?;
+    let open = st.query_map([], session_from_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+    let open: Vec<_> = open.iter().map(key).collect();
+    Ok(crate::domain::pick_active(cur, &open, now))
+}

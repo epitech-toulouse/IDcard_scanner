@@ -174,6 +174,91 @@ pub fn list(c: &Connection, f: &StudentFilter) -> Result<Vec<StudentRow>> {
         .collect()
 }
 
+// ---------- Actions groupées ----------
+
+/// Applique `action` à tous les étudiants de `ids`, en une seule transaction.
+/// Renvoie le nombre d'étudiants concernés.
+pub fn bulk(c: &Connection, ids: &[Id], action: &BulkAction) -> Result<usize> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let tx = c.unchecked_transaction()?;
+    // Les étudiants qui n'existent plus sont ignorés.
+    let mut existing = Vec::with_capacity(ids.len());
+    {
+        let mut st = tx.prepare("SELECT 1 FROM students WHERE id = ?1")?;
+        for &id in ids {
+            if st.exists([id])? && !existing.contains(&id) {
+                existing.push(id);
+            }
+        }
+    }
+
+    match *action {
+        BulkAction::SetActive { active } => {
+            for &id in &existing {
+                tx.execute("UPDATE students SET active = ?1 WHERE id = ?2", params![active, id])?;
+            }
+        }
+        BulkAction::SetCohort { cohort_id } => {
+            if let Some(co) = cohort_id {
+                groups::get_cohort(&tx, co)?;
+            }
+            for &id in &existing {
+                tx.execute("UPDATE students SET cohort_id = ?1 WHERE id = ?2", params![cohort_id, id])?;
+                tx.execute(
+                    "DELETE FROM student_groups WHERE student_id = ?1
+                     AND group_id NOT IN (SELECT id FROM groups WHERE cohort_id IS ?2)",
+                    params![id, cohort_id],
+                )?;
+            }
+        }
+        BulkAction::AddToGroup { group_id } => {
+            let group_cohort: Id = tx
+                .query_row("SELECT cohort_id FROM groups WHERE id = ?1", [group_id], |r| r.get(0))
+                .optional()?
+                .ok_or(Error::NotFound("Groupe"))?;
+            let mut other = 0;
+            {
+                let mut st = tx.prepare("SELECT cohort_id FROM students WHERE id = ?1")?;
+                for &id in &existing {
+                    let co: Option<Id> = st.query_row([id], |r| r.get(0))?;
+                    if co.is_some_and(|co| co != group_cohort) {
+                        other += 1;
+                    }
+                }
+            }
+            if other > 0 {
+                return Err(Error::Invalid(format!(
+                    "{other} étudiant(s) de la sélection appartiennent à une autre promotion que ce groupe. \
+                     Changez d'abord leur promotion."
+                )));
+            }
+            for &id in &existing {
+                tx.execute("UPDATE students SET cohort_id = ?1 WHERE id = ?2 AND cohort_id IS NULL", [group_cohort, id])?;
+                add_to_group(&tx, id, group_id)?;
+            }
+        }
+        BulkAction::RemoveFromGroup { group_id } => {
+            for &id in &existing {
+                tx.execute("DELETE FROM student_groups WHERE student_id = ?1 AND group_id = ?2", [id, group_id])?;
+            }
+        }
+        BulkAction::UnlinkCards => {
+            for &id in &existing {
+                tx.execute("DELETE FROM cards WHERE student_id = ?1", [id])?;
+            }
+        }
+        BulkAction::Delete => {
+            for &id in &existing {
+                tx.execute("DELETE FROM students WHERE id = ?1", [id])?;
+            }
+        }
+    }
+    tx.commit()?;
+    Ok(existing.len())
+}
+
 // ---------- Cartes ----------
 
 pub fn find_by_card(c: &Connection, uid: &str) -> Result<Option<Student>> {
@@ -240,5 +325,47 @@ pub(crate) mod tests {
         assert_eq!(find_by_card(&c, "04:AA").unwrap().unwrap().id, a.id);
         unlink_card(&c, "04:AA").unwrap();
         assert!(find_by_card(&c, "04:AA").unwrap().is_none());
+    }
+
+    #[test]
+    fn bulk_actions() {
+        let c = crate::db::open_in_memory().unwrap();
+        let prog = groups::create_program(&c, "Info").unwrap();
+        let co1 = groups::create_cohort(&c, prog.id, "L1", "").unwrap();
+        let co2 = groups::create_cohort(&c, prog.id, "L2", "").unwrap();
+        let g1 = groups::create_group(&c, co1.id, "TD1").unwrap();
+        let g2 = groups::create_group(&c, co2.id, "TD1").unwrap();
+        let a = create(&c, &input("1", "A", "a", Some(co1.id))).unwrap();
+        let b = create(&c, &input("2", "B", "b", None)).unwrap();
+        let x = create(&c, &input("3", "X", "x", Some(co2.id))).unwrap();
+        let all = StudentFilter { include_inactive: true, ..Default::default() };
+        let row = |id: Id| list(&c, &all).unwrap().into_iter().find(|r| r.student.id == id).unwrap();
+
+        // Ajout au groupe : l'étudiant sans promotion prend celle du groupe ; doublons et inconnus ignorés.
+        assert_eq!(bulk(&c, &[a.id, b.id, a.id, 999], &BulkAction::AddToGroup { group_id: g1.id }).unwrap(), 2);
+        assert_eq!(row(b.id).student.cohort_id, Some(co1.id));
+        assert_eq!(row(a.id).group_ids, vec![g1.id]);
+        // Refus si un étudiant est dans une autre promotion, sans rien modifier.
+        assert!(bulk(&c, &[a.id, x.id], &BulkAction::AddToGroup { group_id: g2.id }).is_err());
+        assert!(row(a.id).group_ids == vec![g1.id] && row(x.id).group_ids.is_empty());
+
+        // Changement de promotion : les groupes de l'ancienne sont retirés.
+        bulk(&c, &[a.id], &BulkAction::SetCohort { cohort_id: Some(co2.id) }).unwrap();
+        assert!(row(a.id).group_ids.is_empty());
+        assert_eq!(row(b.id).group_ids, vec![g1.id]);
+        bulk(&c, &[b.id], &BulkAction::RemoveFromGroup { group_id: g1.id }).unwrap();
+        assert!(row(b.id).group_ids.is_empty());
+
+        bulk(&c, &[a.id, b.id], &BulkAction::SetActive { active: false }).unwrap();
+        assert!(!row(a.id).student.active && !row(b.id).student.active && row(x.id).student.active);
+
+        link_card(&c, "04:01", a.id).unwrap();
+        link_card(&c, "04:02", a.id).unwrap();
+        bulk(&c, &[a.id], &BulkAction::UnlinkCards).unwrap();
+        assert!(row(a.id).cards.is_empty());
+
+        assert_eq!(bulk(&c, &[a.id, b.id], &BulkAction::Delete).unwrap(), 2);
+        assert_eq!(list(&c, &all).unwrap().len(), 1);
+        assert_eq!(bulk(&c, &[], &BulkAction::Delete).unwrap(), 0);
     }
 }

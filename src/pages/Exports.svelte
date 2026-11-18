@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "../lib/api";
-  import { guard, saveFile, toast } from "../lib/app.svelte";
+  import { EXPORT_FILTERS, guard, saveFile, toast, type ExportFormat } from "../lib/app.svelte";
   import { joinNaive, safeFileName, schoolYear, toNaive } from "../lib/format";
   import TargetPicker from "../components/TargetPicker.svelte";
   import type { Id, ProgramNode } from "../lib/types";
@@ -35,8 +35,8 @@
     return names.length ? names.slice(0, 3).join("_") : "tous";
   }
 
-  async function run() {
-    const path = await saveFile(safeFileName(`Presences_${targetName()}_${from}_${to}`) + ".xlsx");
+  async function run(format: ExportFormat) {
+    const path = await saveFile(safeFileName(`Presences_${targetName()}_${from}_${to}`) + "." + format, EXPORT_FILTERS[format]);
     if (!path) return;
     busy = true;
     const r = await guard(
@@ -52,7 +52,7 @@
 
 <div class="page-head">
   <div>
-    <h1>Exports Excel</h1>
+    <h1>Exports</h1>
     <p class="muted">Récapitulatif des présences sur une période : une feuille « Présences » (étudiants × créneaux) et une feuille « Statistiques » (taux par étudiant et par groupe).</p>
   </div>
 </div>
@@ -71,10 +71,14 @@
     <span class="muted small">Étudiants concernés (rien de coché = tous)</span>
     <TargetPicker {tree} bind:groupIds bind:cohortIds />
   </div>
-  <div><button class="primary big" disabled={busy} onclick={run}>{busy ? "Export…" : "Exporter en Excel…"}</button></div>
+  <div class="row">
+    <button class="primary big" disabled={busy} onclick={() => run("xlsx")}>{busy ? "Export…" : "Exporter en Excel…"}</button>
+    <button class="big" disabled={busy} onclick={() => run("csv")}>Exporter en CSV…</button>
+  </div>
   <p class="muted small">
     Codes : P présent · R retard · AJ absence justifiée · A absent · « · » créneau pas encore clos. Le taux de présence compte présents + retards
-    sur les créneaux où l'étudiant était attendu. Pour la feuille d'un seul créneau, utilisez « Excel » dans la liste des créneaux.
+    sur les créneaux où l'étudiant était attendu. Le CSV (séparateur « ; », s'ouvre dans Excel ou LibreOffice) contient la matrice
+    et le bilan par étudiant, sans les statistiques par groupe. Pour la feuille d'un seul créneau, utilisez « Excel » ou « CSV » dans la liste des créneaux.
   </p>
 </div>
 

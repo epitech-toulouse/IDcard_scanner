@@ -2,7 +2,7 @@
 //! Portage de `tools/acr122u_test.py`. Le pilote noyau `pn533_usb` est détaché pendant
 //! l'utilisation puis réattaché.
 
-use super::{CardInfo, CardReader, Feedback, NfcError, acr122};
+use super::{Beep, CardInfo, CardReader, Feedback, NfcError, acr122};
 use rusb::{DeviceHandle, GlobalContext};
 use std::time::{Duration, Instant};
 
@@ -112,7 +112,7 @@ impl CardReader for UsbReader {
                 Some((uid, sak)) => {
                     if self.present.as_ref() != Some(&uid) {
                         self.present = Some(uid.clone());
-                        return Ok(Some(CardInfo { uid, sak: Some(sak) }));
+                        return Ok(Some(CardInfo { uid, sak: Some(sak), atr: None }));
                     }
                 }
                 None => self.present = None,
@@ -124,8 +124,8 @@ impl CardReader for UsbReader {
         }
     }
 
-    fn feedback(&mut self, fb: Feedback) {
-        if let Err(e) = self.escape(&acr122::led_buzzer(fb)) {
+    fn feedback(&mut self, fb: Feedback, beep: Beep) {
+        if let Err(e) = self.escape(&acr122::led_buzzer(fb, beep)) {
             tracing::debug!("retour LED ignoré : {e}");
         }
     }
