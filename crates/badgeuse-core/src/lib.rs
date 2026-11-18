@@ -10,6 +10,7 @@ pub mod groups;
 pub mod import;
 pub mod model;
 pub mod nfc;
+pub mod remote;
 pub mod sessions;
 pub mod settings;
 pub mod students;

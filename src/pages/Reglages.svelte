@@ -7,19 +7,45 @@
 
   let settings = $state<Settings | null>(null);
   let initialReader = "";
+  let initialRemote = "";
   let dataPath = $state("");
+  let localIp = $state<string | null>(null);
+
+  const remoteKey = (s: Settings | null) => `${s?.remote_enabled}:${s?.remote_port}`;
 
   onMount(async () => {
     settings = (await guard(api.getSettings())) ?? null;
     initialReader = settings?.reader ?? "";
+    initialRemote = remoteKey(settings);
     dataPath = await api.dataPath();
+    localIp = (await api.localAddress()) ?? null;
   });
 
   async function save() {
     if (!settings) return;
     if ((await guard(api.saveSettings($state.snapshot(settings)))) !== undefined) {
-      toast(settings.reader !== initialReader ? "Enregistré · le changement de lecteur s'appliquera au prochain démarrage" : "Réglages enregistrés", "success");
+      const restart = settings.reader !== initialReader || remoteKey(settings) !== initialRemote;
+      toast(restart ? "Enregistré · le changement de lecteur ou de bornes s'appliquera au prochain démarrage" : "Réglages enregistrés", "success");
+      // Relit les réglages : le jeton est généré côté serveur à la première activation.
+      settings = (await guard(api.getSettings())) ?? settings;
     }
+  }
+
+  async function copyToken() {
+    if (!settings?.remote_token) return;
+    try {
+      await navigator.clipboard.writeText(settings.remote_token);
+      toast("Jeton copié", "success");
+    } catch {
+      toast("Copie impossible : sélectionnez le jeton à la main", "error");
+    }
+  }
+
+  async function regenerateToken() {
+    if (!settings) return;
+    if (!(await confirmAction("Générer un nouveau jeton ?\n\nLes bornes déjà configurées devront recevoir le nouveau jeton."))) return;
+    settings.remote_token = "";
+    await save();
   }
 
   async function backup() {
@@ -116,6 +142,39 @@
       <p class="muted small">
         Un créneau prévu s'ouvre seul à l'approche de son début et reçoit les badges, même si l'écran d'émargement n'est pas affiché.
         La clôture automatique marque absents les étudiants attendus qui n'ont pas badgé (annulable en rouvrant le créneau).
+      </p>
+    </section>
+    <section class="card">
+      <h2>Bornes réseau</h2>
+      <p class="small">
+        Une borne de scan (Raspberry Pi + écran) envoie ses badges à cet ordinateur par le réseau local. Elle apparaît ci-dessus
+        comme un lecteur de plus et alimente le même créneau actif ; hors ligne, elle garde les badges et les renvoie ensuite.
+      </p>
+      <div class="grid2">
+        <label class="row"><input type="checkbox" bind:checked={settings.remote_enabled} /> Accepter les bornes réseau</label>
+        <label class="field">
+          Port d'écoute
+          <input type="number" min="1024" max="65535" bind:value={settings.remote_port} disabled={!settings.remote_enabled} />
+        </label>
+      </div>
+      {#if settings.remote_enabled && settings.remote_token}
+        <label class="field">
+          Jeton à saisir sur la borne
+          <span class="row">
+            <input class="mono grow" readonly value={settings.remote_token} onfocus={(e) => e.currentTarget.select()} />
+            <button onclick={copyToken}>Copier</button>
+            <button onclick={regenerateToken}>Régénérer</button>
+          </span>
+        </label>
+        <p class="small">
+          Adresse de la borne vers cet ordinateur :
+          <span class="mono">http://{localIp ?? "<adresse-ip-du-pc>"}:{settings.remote_port}</span>
+        </p>
+      {/if}
+      <p class="muted small">
+        Réseau local uniquement : n'ouvrez jamais ce port vers Internet. Le trafic n'est pas chiffré, le jeton protège l'accès mais
+        circule en clair sur le réseau : réservez un réseau de confiance (câble ou Wi-Fi protégé). Les bornes ne reçoivent que le
+        prénom et l'initiale du nom. Le changement d'activation ou de port s'applique au prochain démarrage.
       </p>
     </section>
     <div><button class="primary" onclick={save}>Enregistrer les réglages</button></div>

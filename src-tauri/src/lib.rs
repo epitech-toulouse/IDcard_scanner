@@ -2,6 +2,7 @@
 //! La logique métier est dans `badgeuse-core` ; ici on ne fait que brancher.
 
 mod commands;
+mod remote_server;
 
 use badgeuse_core::attendance::{self, ScanOutcome};
 use badgeuse_core::domain::AutoAction;
@@ -280,6 +281,9 @@ pub fn run() {
             });
             start_readers(app.handle().clone(), kind, mock_reader);
             start_scheduler(app.handle().clone());
+            if cfg.remote_enabled {
+                remote_server::start(app.handle().clone(), cfg.remote_port.clamp(1024, 65535) as u16);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -324,6 +328,7 @@ pub fn run() {
             commands::backup_db,
             commands::restore_db,
             commands::data_path,
+            commands::local_address,
         ])
         .run(tauri::generate_context!())
         .expect("erreur au lancement de Badgeuse");

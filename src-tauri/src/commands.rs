@@ -275,6 +275,16 @@ pub fn restore_db(state: S, path: PathBuf) -> Result<()> {
     Ok(())
 }
 
+/// Adresse IP de ce PC sur le réseau local (à saisir sur la borne). Un socket UDP « connecté »
+/// sert uniquement à lire l'interface choisie par le routage : aucun paquet n'est envoyé.
+#[tauri::command]
+pub fn local_address() -> Option<String> {
+    let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("192.0.2.1:9").ok()?; // adresse de documentation (RFC 5737), jamais routée
+    let ip = sock.local_addr().ok()?.ip();
+    (!ip.is_loopback() && !ip.is_unspecified()).then(|| ip.to_string())
+}
+
 #[tauri::command]
 pub fn data_path(state: S) -> String {
     state.db_path.display().to_string()

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { reader } from "../lib/app.svelte";
 
-  const LABEL = { pcsc: "PC/SC", usb: "USB direct", mock: "Simulé", none: "" } as const;
+  const LABEL = { pcsc: "PC/SC", usb: "USB direct", mock: "Simulé", remote: "Borne réseau", none: "" } as const;
 </script>
 
 <a class="reader" href="#/reglages" title={reader.message}>

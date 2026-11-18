@@ -93,10 +93,11 @@ export type ScanOutcome =
   | { kind: "session_not_open"; uid: string }
   | { kind: "random_uid"; uid: string };
 
-export interface ReaderStatus { name: string; connected: boolean; backend: "pcsc" | "usb" | "mock" | "none"; message: string }
+export type ReaderBackend = "pcsc" | "usb" | "mock" | "remote" | "none";
+export interface ReaderStatus { name: string; connected: boolean; backend: ReaderBackend; message: string }
 export interface ReadersStatus {
   connected: boolean;
-  backend: "pcsc" | "usb" | "mock" | "none";
+  backend: ReaderBackend;
   message: string;
   count: number;
   connected_count: number;
@@ -125,6 +126,9 @@ export interface Settings {
   auto_open: boolean;
   auto_open_lead_min: number;
   auto_close: boolean;
+  remote_enabled: boolean;
+  remote_port: number;
+  remote_token: string;
 }
 
 // attendance::AutoEvent (événement « session-auto »)

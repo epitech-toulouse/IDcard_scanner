@@ -1,0 +1,27 @@
+name: Borne
+
+on:
+  push:
+    branches: [main, dev]
+    paths: ["crates/**", "Cargo.toml", "Cargo.lock", ".github/workflows/kiosk.yml"]
+  pull_request:
+    paths: ["crates/**", "Cargo.toml", "Cargo.lock", ".github/workflows/kiosk.yml"]
+
+jobs:
+  deb-arm64:
+    # Runner arm64 : le .deb produit est directement installable sur un Raspberry Pi 4/5 (64 bits).
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dépendances système
+        run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev pkg-config
+      - name: Rust stable
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Tests (cœur métier et borne)
+        run: cargo test -p badgeuse-core -p badgeuse-kiosk
+      - name: Paquet .deb
+        run: cargo install cargo-deb --locked && cargo deb -p badgeuse-kiosk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: badgeuse-kiosk-arm64
+          path: target/debian/*.deb
