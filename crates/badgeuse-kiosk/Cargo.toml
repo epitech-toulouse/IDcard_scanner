@@ -1,0 +1,37 @@
+[package]
+name = "badgeuse-kiosk"
+version = "0.1.0"
+edition = "2024"
+description = "Borne de scan NFC (Raspberry Pi) : lit les badges, les envoie à l'appli Badgeuse et affiche le résultat en HDMI"
+
+[dependencies]
+badgeuse-core = { path = "../badgeuse-core", features = ["pcsc"] }
+chrono = "0.4.45"
+rusqlite = { version = "0.43.0", features = ["bundled", "chrono"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tiny_http = "0.12"
+toml = "0.8"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+# HTTP en clair uniquement (réseau local) : pas de TLS embarqué.
+ureq = { version = "3", default-features = false, features = ["json"] }
+
+# Paquet Debian arm64 : `cargo deb -p badgeuse-kiosk` (voir dist/).
+[package.metadata.deb]
+maintainer = "Badgeuse"
+section = "utils"
+priority = "optional"
+depends = "$auto, pcscd, libccid, adduser, polkitd"
+recommends = "cage, chromium, avahi-daemon"
+extended-description = "Lecteur NFC ACR122U + affichage HDMI. Envoie les badges à l'appli Badgeuse du PC de l'enseignant (réseau local) et les garde en file d'attente si le réseau est coupé."
+maintainer-scripts = "dist/debian"
+conf-files = ["/etc/badgeuse-kiosk.toml"]
+assets = [
+  ["target/release/badgeuse-kiosk", "usr/bin/", "755"],
+  ["dist/badgeuse-kiosk.toml", "etc/badgeuse-kiosk.toml", "640"],
+  ["dist/badgeuse-kiosk.service", "lib/systemd/system/", "644"],
+  ["dist/badgeuse-display.service", "lib/systemd/system/", "644"],
+  ["dist/blacklist-acr122u.conf", "etc/modprobe.d/", "644"],
+  ["dist/49-badgeuse-kiosk.rules", "etc/polkit-1/rules.d/", "644"],
+]

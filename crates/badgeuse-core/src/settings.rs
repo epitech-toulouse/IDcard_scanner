@@ -23,6 +23,12 @@ pub struct Settings {
     pub auto_open_lead_min: i64,
     /// Clôt automatiquement les créneaux ouverts à leur fin (les non-badgés passent absents).
     pub auto_close: bool,
+    /// Accepte les badges des bornes réseau (désactivé par défaut) — pris en compte au prochain démarrage.
+    pub remote_enabled: bool,
+    /// Port d'écoute des bornes (1024–65535).
+    pub remote_port: i64,
+    /// Jeton que les bornes présentent ; généré à la première activation.
+    pub remote_token: String,
 }
 
 impl Default for Settings {
@@ -33,6 +39,9 @@ impl Default for Settings {
             auto_open: true,
             auto_open_lead_min: 10,
             auto_close: false,
+            remote_enabled: false,
+            remote_port: 8737,
+            remote_token: String::new(),
         }
     }
 }
@@ -62,6 +71,9 @@ pub fn load(c: &Connection) -> Result<Settings> {
         auto_open: flag("auto_open", d.auto_open)?,
         auto_open_lead_min: num("auto_open_lead_min", d.auto_open_lead_min)?,
         auto_close: flag("auto_close", d.auto_close)?,
+        remote_enabled: flag("remote_enabled", d.remote_enabled)?,
+        remote_port: num("remote_port", d.remote_port)?,
+        remote_token: get_raw(c, "remote_token")?.unwrap_or(d.remote_token),
     })
 }
 
@@ -74,6 +86,15 @@ pub fn save(c: &Connection, s: &Settings) -> Result<()> {
     set_raw(c, "auto_open", if s.auto_open { "1" } else { "0" })?;
     set_raw(c, "auto_open_lead_min", &s.auto_open_lead_min.clamp(0, 120).to_string())?;
     set_raw(c, "auto_close", if s.auto_close { "1" } else { "0" })?;
+    set_raw(c, "remote_enabled", if s.remote_enabled { "1" } else { "0" })?;
+    set_raw(c, "remote_port", &s.remote_port.clamp(1024, 65535).to_string())?;
+    // Une borne n'est jamais acceptée sans jeton : on en génère un à l'activation.
+    let token = if s.remote_enabled && s.remote_token.trim().is_empty() {
+        crate::remote::generate_token()?
+    } else {
+        s.remote_token.trim().to_string()
+    };
+    set_raw(c, "remote_token", &token)?;
     Ok(())
 }
 
@@ -94,5 +115,22 @@ mod tests {
         let s2 = super::load(&c).unwrap();
         assert_eq!((s2.reader.as_str(), s2.reader_feedback, s2.reader_beep), ("usb", false, crate::nfc::Beep::Discreet));
         assert!(s2.auto_close);
+    }
+
+    #[test]
+    fn remote_token_generated_on_enable() {
+        let c = crate::db::open_in_memory().unwrap();
+        let mut s = super::load(&c).unwrap();
+        assert!(!s.remote_enabled && s.remote_token.is_empty() && s.remote_port == 8737);
+        super::save(&c, &s).unwrap();
+        assert!(super::load(&c).unwrap().remote_token.is_empty());
+        s.remote_enabled = true;
+        s.remote_port = 80; // hors plage : ramené à 1024
+        super::save(&c, &s).unwrap();
+        let s2 = super::load(&c).unwrap();
+        assert_eq!((s2.remote_enabled, s2.remote_port, s2.remote_token.len()), (true, 1024, 32));
+        // Le jeton existant est conservé.
+        super::save(&c, &s2).unwrap();
+        assert_eq!(super::load(&c).unwrap().remote_token, s2.remote_token);
     }
 }

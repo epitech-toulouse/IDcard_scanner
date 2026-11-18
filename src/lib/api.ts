@@ -66,6 +66,7 @@ export const api = {
   backupDb: (path: string) => invoke<void>("backup_db", { path }),
   restoreDb: (path: string) => invoke<void>("restore_db", { path }),
   dataPath: () => invoke<string>("data_path"),
+  localAddress: () => invoke<string | null>("local_address"),
 };
 
 export const events = {

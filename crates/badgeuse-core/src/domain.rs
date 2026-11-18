@@ -68,6 +68,22 @@ pub fn pick_active(
     current.filter(|c| c.1 == SessionState::Open).map(|c| c.0)
 }
 
+/// Un créneau accueille-t-il un badge pris à l'instant `at` ?
+/// De `début − avance` jusqu'à la fin (exclue), comme l'ouverture automatique.
+pub fn session_window_contains(starts_at: NaiveDateTime, ends_at: NaiveDateTime, lead_min: i64, at: NaiveDateTime) -> bool {
+    at >= starts_at - Duration::minutes(lead_min.max(0)) && at < ends_at
+}
+
+/// Créneau qui reçoit un badge rejoué par une borne. `candidates` : (id, début) des créneaux
+/// dont la fenêtre contient l'heure du badge. On garde l'actif s'il en fait partie, sinon le
+/// plus tôt commencé ; à défaut, l'actif (même traitement qu'un badge en direct).
+pub fn pick_remote_session(active: Option<i64>, candidates: &[(i64, NaiveDateTime)]) -> Option<i64> {
+    if let Some(a) = active.filter(|a| candidates.iter().any(|c| c.0 == *a)) {
+        return Some(a);
+    }
+    candidates.iter().min_by_key(|c| (c.1, c.0)).map(|c| c.0).or(active)
+}
+
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct Tally {
     pub sessions: u32,
@@ -142,6 +158,30 @@ mod tests {
         assert_eq!(pick_active(Some(b), &open, dt("2026-11-17 16:40")), Some(2));
         assert_eq!(pick_active(Some((3, Closed, a.2, a.3)), &[], dt("2026-11-17 16:40")), None);
         assert_eq!(pick_active(None, &open, dt("2026-11-17 16:40")), None);
+    }
+
+    #[test]
+    fn session_window() {
+        let (s, e) = (dt("2026-11-17 08:00"), dt("2026-11-17 10:00"));
+        assert!(!session_window_contains(s, e, 10, dt("2026-11-17 07:49")));
+        assert!(session_window_contains(s, e, 10, dt("2026-11-17 07:50")));
+        assert!(session_window_contains(s, e, 10, dt("2026-11-17 09:59")));
+        assert!(!session_window_contains(s, e, 10, dt("2026-11-17 10:00")));
+        // Avance négative ignorée.
+        assert!(!session_window_contains(s, e, -5, dt("2026-11-17 07:59")));
+    }
+
+    #[test]
+    fn remote_session_choice() {
+        let (a, b) = ((1, dt("2026-11-17 08:00")), (2, dt("2026-11-17 08:30")));
+        // L'actif gagne s'il est candidat, même s'il commence plus tard.
+        assert_eq!(pick_remote_session(Some(2), &[a, b]), Some(2));
+        // Sinon le plus tôt commencé.
+        assert_eq!(pick_remote_session(Some(9), &[b, a]), Some(1));
+        assert_eq!(pick_remote_session(None, &[b, a]), Some(1));
+        // Aucun candidat : l'actif tel quel, ou rien.
+        assert_eq!(pick_remote_session(Some(9), &[]), Some(9));
+        assert_eq!(pick_remote_session(None, &[]), None);
     }
 
     #[test]

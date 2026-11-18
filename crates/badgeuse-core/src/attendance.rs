@@ -1,6 +1,7 @@
 //! Enregistrement des présences : badge, correction manuelle, clôture.
 
 use crate::model::*;
+use crate::remote::{self, RemoteRecorded, RemoteReply, RemoteScan};
 use crate::{Error, Result, db, domain, sessions, students};
 use chrono::NaiveDateTime;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -76,9 +77,20 @@ pub fn identify(c: &Connection, uid: &str) -> Result<ScanOutcome> {
 
 /// Traite un passage de carte sur le créneau `session_id`.
 pub fn record_scan(c: &Connection, session_id: Id, uid: &str, now: NaiveDateTime) -> Result<ScanOutcome> {
+    record_scan_inner(c, session_id, uid, now, false)
+}
+
+/// `allow_closed` : badge rejoué par une borne après la clôture du créneau. Il remplace alors
+/// l'absence posée à la clôture (`domain::scan_overrides`), exactement comme à la réouverture.
+fn record_scan_inner(c: &Connection, session_id: Id, uid: &str, now: NaiveDateTime, allow_closed: bool) -> Result<ScanOutcome> {
     let uid = uid.to_string();
     let session = sessions::get(c, session_id)?;
-    if session.state != SessionState::Open {
+    let accepts = match session.state {
+        SessionState::Open => true,
+        SessionState::Closed => allow_closed,
+        SessionState::Planned => false,
+    };
+    if !accepts {
         return Ok(ScanOutcome::SessionNotOpen { uid });
     }
     let Some(student) = students::find_by_card(c, &uid)? else {
@@ -94,6 +106,73 @@ pub fn record_scan(c: &Connection, session_id: Id, uid: &str, now: NaiveDateTime
     let status = domain::status_for_scan(session.starts_at, session.late_after_min, now);
     upsert(c, session_id, student.id, status, Some(now), Source::Badge, None)?;
     Ok(ScanOutcome::Recorded { uid, student, status, scanned_at: now })
+}
+
+/// Créneaux (ouverts ou clos) dont la fenêtre contient `at` et où l'étudiant est attendu
+/// (`student` = None pour une carte inconnue : tous les créneaux de la fenêtre).
+fn remote_candidates(c: &Connection, student: Option<Id>, at: NaiveDateTime, lead_min: i64) -> Result<Vec<(Id, NaiveDateTime)>> {
+    // Présélection large en SQL (un jour de marge), la règle exacte reste dans `domain`.
+    let day = chrono::Duration::days(1);
+    let mut found = vec![];
+    for s in sessions::list(c, Some(at - day), Some(at + day))? {
+        let s = s.session;
+        if s.state == SessionState::Planned || !domain::session_window_contains(s.starts_at, s.ends_at, lead_min, at) {
+            continue;
+        }
+        if student.is_some_and(|st| !sessions::expected_ids(c, s.id).is_ok_and(|ids| ids.contains(&st))) {
+            continue;
+        }
+        found.push((s.id, s.starts_at));
+    }
+    Ok(found)
+}
+
+/// Traite un badge envoyé par une borne réseau (voir `remote`).
+/// - Rejeu (même `scan_id`) : renvoie la réponse d'origine, sans rien réécrire.
+/// - Heure ramenée sur l'horloge de l'appli (`remote::correct_clock`).
+/// - Créneau : l'actif si la fenêtre du badge le contient, sinon le créneau ouvert ou clos de cette
+///   fenêtre où l'étudiant est attendu (`domain::pick_remote_session`) ; à défaut, l'actif, comme en direct.
+pub fn record_remote_scan(c: &Connection, active: Option<Id>, scan: &RemoteScan, now: NaiveDateTime) -> Result<RemoteRecorded> {
+    if scan.scan_id.trim().is_empty() || scan.device.trim().is_empty() {
+        return Err(Error::Invalid("Badge distant sans identifiant de borne".into()));
+    }
+    if let Some(json) = c
+        .query_row("SELECT reply_json FROM remote_scans WHERE scan_id = ?1", [&scan.scan_id], |r| r.get::<_, String>(0))
+        .optional()?
+    {
+        let reply = serde_json::from_str(&json).map_err(|e| Error::Invalid(format!("Réponse enregistrée illisible : {e}")))?;
+        return Ok(RemoteRecorded { reply, outcome: None });
+    }
+    let bytes = crate::nfc::parse_uid(&scan.uid).ok_or_else(|| Error::Invalid(format!("UID invalide : {}", scan.uid)))?;
+    let card = crate::nfc::CardInfo::new(bytes);
+    let uid = card.uid_hex();
+    let at = remote::correct_clock(scan.scanned_at, scan.device_now, now);
+
+    let mut session_title = None;
+    let outcome = if card.is_random_uid() {
+        ScanOutcome::RandomUid { uid: uid.clone() }
+    } else {
+        let lead = crate::settings::load(c)?.auto_open_lead_min;
+        let student = students::find_by_card(c, &uid)?.map(|s| s.id);
+        let candidates = remote_candidates(c, student, at, lead)?;
+        match domain::pick_remote_session(active, &candidates) {
+            Some(sid) => {
+                session_title = Some(sessions::get(c, sid)?.title);
+                record_scan_inner(c, sid, &uid, at, true)?
+            }
+            None => identify(c, &uid)?,
+        }
+    };
+
+    let mut reply = RemoteReply::from_outcome(&outcome);
+    reply.session_title = session_title;
+    c.execute("DELETE FROM remote_scans WHERE received_at < ?1", [remote::purge_before(now)])?;
+    c.execute(
+        "INSERT INTO remote_scans(scan_id, device, uid, scanned_at, received_at, reply_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![scan.scan_id, scan.device, uid, at, now, serde_json::to_string(&reply).expect("réponse sérialisable")],
+    )?;
+    Ok(RemoteRecorded { reply, outcome: Some(outcome) })
 }
 
 /// Le prof accepte un étudiant non attendu qui vient de badger : statut selon l'heure, source badge.
@@ -296,6 +375,114 @@ pub(crate) mod tests {
         set_manual(&c, sid, a, Status::Excused, Some("certificat")).unwrap();
         let a_row = sessions::detail(&c, sid).unwrap().rows.into_iter().find(|r| r.student.id == a).unwrap();
         assert_eq!(a_row.status, Some(Status::Excused));
+    }
+
+    fn remote(id: &str, uid: &str, at: &str, device_now: &str) -> RemoteScan {
+        RemoteScan {
+            scan_id: id.into(),
+            device: "borne1".into(),
+            uid: uid.into(),
+            scanned_at: NaiveDateTime::parse_from_str(at, "%Y-%m-%d %H:%M:%S").unwrap(),
+            device_now: NaiveDateTime::parse_from_str(device_now, "%Y-%m-%d %H:%M:%S").unwrap(),
+        }
+    }
+
+    #[test]
+    fn remote_scan_live_and_replay() {
+        use crate::remote::ReplyKind;
+        let (c, sid, _, [a, _, _]) = fixture();
+        open(&c, sid).unwrap();
+        let now = dt("2026-11-17 08:03");
+        let s = remote("borne1-1", "04:A1", "2026-11-17 08:02:55", "2026-11-17 08:03:00");
+        let r = record_remote_scan(&c, Some(sid), &s, now).unwrap();
+        assert!(matches!(r.outcome, Some(ScanOutcome::Recorded { status: Status::Present, .. })));
+        assert_eq!((r.reply.kind, r.reply.display_name.as_deref()), (ReplyKind::Recorded, Some("Alice D.")));
+
+        // Rejeu du même scan_id : même réponse, rien de ré-émis, rien de réécrit.
+        let again = record_remote_scan(&c, Some(sid), &s, dt("2026-11-17 09:00")).unwrap();
+        assert!(again.outcome.is_none());
+        assert_eq!(again.reply, r.reply);
+        let row = sessions::detail(&c, sid).unwrap().rows.into_iter().find(|x| x.student.id == a).unwrap();
+        assert_eq!(row.scanned_at, Some(dt("2026-11-17 08:02")).map(|d| d + chrono::Duration::seconds(55)));
+
+        // UID aléatoire : refusé, mais tracé.
+        let rnd = remote("borne1-2", "08:11:22:33", "2026-11-17 08:04:00", "2026-11-17 08:04:00");
+        assert!(matches!(record_remote_scan(&c, Some(sid), &rnd, now).unwrap().outcome, Some(ScanOutcome::RandomUid { .. })));
+        // Carte inconnue, UID mal formé, scan sans borne.
+        let unk = remote("borne1-3", "04:FF", "2026-11-17 08:04:00", "2026-11-17 08:04:00");
+        assert!(matches!(record_remote_scan(&c, Some(sid), &unk, now).unwrap().outcome, Some(ScanOutcome::UnknownCard { .. })));
+        assert!(record_remote_scan(&c, Some(sid), &remote("borne1-4", "zz", "2026-11-17 08:04:00", "2026-11-17 08:04:00"), now).is_err());
+        let mut nodev = unk.clone();
+        nodev.scan_id = "x".into();
+        nodev.device = " ".into();
+        assert!(record_remote_scan(&c, Some(sid), &nodev, now).is_err());
+    }
+
+    #[test]
+    fn remote_scan_after_close_and_clock_skew() {
+        let (c, sid, _, [a, b, _]) = fixture();
+        open(&c, sid).unwrap();
+        assert_eq!(close(&c, sid).unwrap(), 2); // Alice et Bob passent absents (auto)
+        students::link_card(&c, "04:B2", b).unwrap();
+
+        // Borne hors ligne, horloge en retard de 2 h : badge de 08:05 (heure borne 06:05) rejoué à 10:30.
+        // L'actif a disparu (clos) : le créneau est retrouvé par l'heure corrigée, l'absence auto est remplacée.
+        let late_sync = remote("borne1-9", "04:A1", "2026-11-17 06:05:00", "2026-11-17 08:30:00");
+        let r = record_remote_scan(&c, None, &late_sync, dt("2026-11-17 10:30")).unwrap();
+        assert!(matches!(r.outcome, Some(ScanOutcome::Recorded { status: Status::Present, .. })), "{:?}", r.outcome);
+        let rows = sessions::detail(&c, sid).unwrap().rows;
+        let alice = rows.iter().find(|x| x.student.id == a).unwrap();
+        assert_eq!((alice.status, alice.source, alice.scanned_at), (Some(Status::Present), Some(Source::Badge), Some(dt("2026-11-17 08:05"))));
+
+        // Un badge hors de toute fenêtre, sans créneau actif : simple identification.
+        let far = remote("borne1-10", "04:B2", "2026-11-17 14:00:00", "2026-11-17 14:00:00");
+        let r = record_remote_scan(&c, None, &far, dt("2026-11-17 14:00")).unwrap();
+        assert!(matches!(r.outcome, Some(ScanOutcome::Identified { student: Some(_), .. })));
+        // Bob reste absent : ce badge n'a rien enregistré.
+        let rows = sessions::detail(&c, sid).unwrap().rows;
+        assert_eq!(rows.iter().find(|x| x.student.id == b).unwrap().status, Some(Status::Absent));
+    }
+
+    #[test]
+    fn remote_scan_picks_session_where_student_is_expected() {
+        let (c, sid, co, [a, _, ch]) = fixture();
+        // Second créneau en même temps, pour la promotion entière ; les deux sont ouverts.
+        let other = sessions::create(
+            &c,
+            &SessionInput {
+                title: "Amphi".into(),
+                room: None,
+                starts_at: dt("2026-11-17 08:30"),
+                ends_at: dt("2026-11-17 09:30"),
+                late_after_min: 10,
+                group_ids: vec![],
+                cohort_ids: vec![co],
+            },
+        )
+        .unwrap();
+        open(&c, sid).unwrap();
+        open(&c, other.id).unwrap();
+        let now = dt("2026-11-17 08:40");
+        // Chloé n'est pas dans le TD1 (actif = sid) : son badge va sur l'amphi où elle est attendue.
+        let r = record_remote_scan(&c, Some(sid), &remote("b-1", "04:C3", "2026-11-17 08:40:00", "2026-11-17 08:40:00"), now).unwrap();
+        assert!(matches!(r.outcome, Some(ScanOutcome::Recorded { .. })));
+        assert!(sessions::detail(&c, other.id).unwrap().rows.iter().any(|x| x.student.id == ch && x.status.is_some()));
+        // Alice est attendue sur les deux : l'actif gagne.
+        record_remote_scan(&c, Some(sid), &remote("b-2", "04:A1", "2026-11-17 08:41:00", "2026-11-17 08:41:00"), now).unwrap();
+        assert!(sessions::detail(&c, sid).unwrap().rows.iter().any(|x| x.student.id == a && x.status.is_some()));
+        assert!(!sessions::detail(&c, other.id).unwrap().rows.iter().any(|x| x.student.id == a && x.status.is_some()));
+    }
+
+    #[test]
+    fn remote_scans_are_purged() {
+        let (c, sid, _, _) = fixture();
+        open(&c, sid).unwrap();
+        let old = remote("old-1", "04:A1", "2026-10-01 08:00:00", "2026-10-01 08:00:00");
+        record_remote_scan(&c, Some(sid), &old, dt("2026-10-01 08:00")).unwrap();
+        let new = remote("new-1", "04:A1", "2026-11-17 08:00:00", "2026-11-17 08:00:00");
+        record_remote_scan(&c, Some(sid), &new, dt("2026-11-17 08:00")).unwrap();
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM remote_scans", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
     }
 
     #[test]

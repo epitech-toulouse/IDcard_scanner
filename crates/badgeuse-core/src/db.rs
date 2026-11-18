@@ -5,7 +5,10 @@ use std::path::Path;
 
 /// Migrations appliquées dans l'ordre ; l'index+1 est stocké dans `PRAGMA user_version`.
 /// Ne jamais modifier une migration existante : en ajouter une nouvelle à la fin.
-const MIGRATIONS: &[&str] = &[include_str!("../migrations/001_init.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../migrations/001_init.sql"),
+    include_str!("../migrations/002_remote_scans.sql"),
+];
 
 pub fn open(path: &Path) -> Result<Connection> {
     if let Some(dir) = path.parent() {

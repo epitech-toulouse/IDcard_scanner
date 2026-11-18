@@ -27,6 +27,8 @@ python3 tools/acr122u_test.py 30              # diagnostic du lecteur en USB dir
 python3 tools/carte_tool.py                   # testeur PC/SC : lecteur + UID/ATR + contenu de la carte
 python3 tools/carte_tool.py read 4            # lit un bloc/une page
 python3 tools/carte_tool.py write 6 DEADBEEF  # écrit (édite) une carte MIFARE Classic / Ultralight / NTAG
+cargo test -p badgeuse-kiosk                  # borne Raspberry Pi : file d'attente, envoi, affichage
+cargo deb -p badgeuse-kiosk                   # paquet .deb de la borne (arm64 sur un Pi / runner arm64)
 ```
 
 Prérequis système (Ubuntu/Debian) :
@@ -47,9 +49,18 @@ crates/badgeuse-core/src/
                  (matrice + statistiques ; le CSV n'a pas les statistiques par groupe)
   nfc/           trait CardReader, run_loop (reconnexion, anti-rebond 3 s), pcsc.rs, usb.rs, mock.rs, acr122.rs,
                  diagnostic.rs (type de carte d'après ATR/SAK, pour « Test cartes »)
+  remote.rs      protocole borne ↔ appli (RemoteScan, RemoteReply, HeartbeatReply) et règles pures : correction
+                 d'horloge, jeton (comparaison en temps constant), réponse minimale pour l'écran de la borne
+crates/badgeuse-kiosk/   borne de scan (Raspberry Pi) : binaire séparé, sans Tauri
+  config.rs      /etc/badgeuse-kiosk.toml (validé : HTTP seulement, jeton obligatoire, affichage en 127.0.0.1)
+  queue.rs       file SQLite des badges non transmis (écrits AVANT l'envoi, supprimés une fois traités)
+  client.rs      client HTTP (trait Transport, doublé dans les tests) ; kiosk.rs : on_card + flush (toutes les 10 s)
+  display.rs web.rs static/index.html   page plein écran servie sur 127.0.0.1:8080 (interrogation de /state, aucune ressource distante)
+  readers.rs     lecteurs PC/SC (un thread par lecteur) ou simulé ; dist/ : unités systemd, polkit, scripts du .deb
 src-tauri/src/
   lib.rs         état (Mutex<Connection>, créneau actif), un thread par lecteur + superviseur PC/SC → événements
   commands.rs    #[tauri::command] fins qui délèguent au core
+  remote_server.rs  serveur HTTP (axum) des bornes : POST /api/scan et /api/heartbeat, jeton Bearer, → card-scanned
 src/
   lib/api.ts     wrappers typés des commandes et des événements
   lib/app.svelte.ts   route (#/page/id), statut lecteur, toasts, dialogues natifs
@@ -65,6 +76,17 @@ Flux d'un badge :
 
 Mode « Test cartes » (`set_card_test`, actif tant que la page `#/cartes` est affichée) : `on_card` émet
 `card-test` (un `CardDiagnostic`) au lieu d'enregistrer quoi que ce soit, même si un créneau est actif.
+
+Flux d'un badge de **borne** (réglage `remote_enabled`, désactivé par défaut ; activation et port pris en compte au démarrage) :
+1. La borne écrit le badge dans sa file locale, puis l'envoie (`POST /api/scan`, `RemoteScan` avec `scan_id` unique).
+2. `remote_server.rs` vérifie le jeton, puis `attendance::record_remote_scan` : même scan_id = même réponse (table `remote_scans`,
+   purgée à 30 jours) ; heure corrigée de l'écart d'horloge de la borne (le Pi n'a pas de pile) ; créneau = l'actif si la
+   fenêtre du badge le contient, sinon le créneau ouvert **ou clos** de cette fenêtre où l'étudiant est attendu
+   (`domain::pick_remote_session`). Un badge rejoué après la clôture remplace l'absence `auto`.
+3. L'événement `card-scanned` part vers le front comme pour un badge local ; la borne reçoit une `RemoteReply` minimale.
+4. Hors ligne, la borne garde le badge et le renvoie dans l'ordre (toutes les 10 s) avec son heure d'origine.
+   En mode « Test cartes », un badge rejoué (`RemoteScan::is_replay`) est refusé en 503 pour que la borne le garde.
+   Une borne apparaît dans `ReadersStatus` (`backend: "remote"`, nom `borne:<device>`), hors ligne après 30 s sans signal.
 
 ## Vocabulaire et règles métier
 
@@ -105,7 +127,12 @@ Mode « Test cartes » (`set_card_test`, actif tant que la page `#/cartes` est a
 
 ## Données personnelles (RGPD)
 
-Tout reste en local, sans aucun appel réseau : ne pas en ajouter (télémétrie, CDN, polices distantes…).
+Tout reste en local : aucun service externe, aucune télémétrie, aucun CDN ni police distante. Le seul trafic réseau
+autorisé est celui des bornes (Raspberry Pi) vers l'appli du PC de l'enseignant, **sur le réseau local** :
+- l'appli ne fait que répondre (désactivé par défaut) ; jeton obligatoire, jamais de borne acceptée sans jeton ;
+- HTTP en clair (pas de TLS) : le jeton circule en clair sur le LAN, ne jamais exposer le port vers Internet ;
+- la borne ne reçoit que prénom + initiale du nom (jamais numéro étudiant ni e-mail) ; sa file ne contient que UID + heure
+  et se vide à la transmission ; `remote_scans` (UID + heure) est purgée au bout de 30 jours.
 Les sauvegardes et les exports se font à la main par l'utilisateur. Purge de fin d'année : supprimer la promotion (cascade).
 
 ## Tests manuels

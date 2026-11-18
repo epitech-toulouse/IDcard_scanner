@@ -8,11 +8,13 @@ calamine = "0.38.0"
 chrono = { version = "0.4.45", features = ["serde"] }
 csv = "1.4.0"
 encoding_rs = "0.8.44"
+getrandom = "0.3.4"
 pcsc = { version = "2.9.0", optional = true }
 rusb = { version = "0.9.4", features = ["vendored"], optional = true }
 rusqlite = { version = "0.43.0", features = ["bundled", "chrono", "backup"] }
 rust_xlsxwriter = "0.102.0"
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
 thiserror = "2.0.21"
 tracing = "0.1.44"
 
