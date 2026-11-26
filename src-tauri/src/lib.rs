@@ -1,6 +1,7 @@
 //! Application Tauri : état partagé, thread lecteur NFC, enregistrement des commandes.
 //! La logique métier est dans `badgeuse-core` ; ici on ne fait que brancher.
 
+mod app_update;
 mod commands;
 mod remote_server;
 
@@ -251,6 +252,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let db_path = app.path().app_data_dir()?.join("badgeuse.db");
             tracing::info!("base : {}", db_path.display());
@@ -281,12 +283,15 @@ pub fn run() {
             });
             start_readers(app.handle().clone(), kind, mock_reader);
             start_scheduler(app.handle().clone());
+            app_update::start(app.handle().clone());
             if cfg.remote_enabled {
                 remote_server::start(app.handle().clone(), cfg.remote_port.clamp(1024, 65535) as u16);
             }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            app_update::app_update_check,
+            app_update::app_update_install,
             commands::update_info,
             commands::update_generate_keys,
             commands::update_publish,

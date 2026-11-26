@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "../lib/api";
-  import { DB, confirmAction, guard, pickFile, reader, saveFile, toast } from "../lib/app.svelte";
+  import { DB, appUpdate, confirmAction, guard, installAppUpdate, pickFile, reader, saveFile, toast } from "../lib/app.svelte";
   import { toNaive } from "../lib/format";
   import type { Settings, UpdateInfo } from "../lib/types";
 
@@ -43,6 +43,21 @@
     if (next) {
       upd = next;
       toast(`Mise à jour ${next.offer?.version} proposée aux bornes : elles l'installent quand plus personne ne badge`, "success", 7000);
+    }
+  }
+
+  let checking = $state(false);
+  async function checkAppUpdate() {
+    checking = true;
+    try {
+      const u = await guard(api.appUpdateCheck());
+      if (u === null) toast("Badgeuse est à jour", "success");
+      else if (u) {
+        appUpdate.info = u;
+        appUpdate.dismissed = false;
+      }
+    } finally {
+      checking = false;
     }
   }
 
@@ -273,6 +288,22 @@
         La version installée de chaque borne s'affiche dans la liste des lecteurs. Une borne n'installe jamais une version plus
         ancienne que la sienne ; la clé privée ne quitte jamais cet ordinateur.
       </p>
+    </section>
+    <section class="card">
+      <h2>Mise à jour de Badgeuse</h2>
+      <label class="row"><input type="checkbox" bind:checked={settings.app_update_check} /> Chercher une nouvelle version au démarrage puis chaque jour</label>
+      <p class="muted small">
+        Seul accès à Internet de l'appli : la lecture de la dernière version publiée sur GitHub. Aucune donnée n'est envoyée.
+        Le paquet est vérifié (signature) avant d'être installé ; l'appli redémarre ensuite.
+      </p>
+      <div class="row">
+        <button onclick={checkAppUpdate} disabled={checking || appUpdate.installing}>{checking ? "Recherche…" : "Vérifier maintenant"}</button>
+        {#if appUpdate.info}
+          <button class="primary" onclick={installAppUpdate} disabled={appUpdate.installing}>
+            {appUpdate.installing ? "Installation…" : `Installer la version ${appUpdate.info.version}`}
+          </button>
+        {/if}
+      </div>
     </section>
     <div><button class="primary" onclick={save}>Enregistrer les réglages</button></div>
   {/if}

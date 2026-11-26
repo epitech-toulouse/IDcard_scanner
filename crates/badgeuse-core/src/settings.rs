@@ -29,6 +29,8 @@ pub struct Settings {
     pub remote_port: i64,
     /// Jeton que les bornes présentent ; généré à la première activation.
     pub remote_token: String,
+    /// Cherche une nouvelle version de l'appli (GitHub) au démarrage puis chaque jour. Seul appel vers Internet.
+    pub app_update_check: bool,
 }
 
 impl Default for Settings {
@@ -42,6 +44,7 @@ impl Default for Settings {
             remote_enabled: false,
             remote_port: 8737,
             remote_token: String::new(),
+            app_update_check: true,
         }
     }
 }
@@ -74,6 +77,7 @@ pub fn load(c: &Connection) -> Result<Settings> {
         remote_enabled: flag("remote_enabled", d.remote_enabled)?,
         remote_port: num("remote_port", d.remote_port)?,
         remote_token: get_raw(c, "remote_token")?.unwrap_or(d.remote_token),
+        app_update_check: flag("app_update_check", d.app_update_check)?,
     })
 }
 
@@ -95,6 +99,7 @@ pub fn save(c: &Connection, s: &Settings) -> Result<()> {
         s.remote_token.trim().to_string()
     };
     set_raw(c, "remote_token", &token)?;
+    set_raw(c, "app_update_check", if s.app_update_check { "1" } else { "0" })?;
     Ok(())
 }
 
@@ -110,11 +115,13 @@ mod tests {
         s.reader_feedback = false;
         s.reader_beep = crate::nfc::Beep::Discreet;
         assert!(s.auto_open && !s.auto_close);
+        assert!(s.app_update_check, "recherche de mises à jour activée par défaut");
         s.auto_close = true;
+        s.app_update_check = false;
         super::save(&c, &s).unwrap();
         let s2 = super::load(&c).unwrap();
         assert_eq!((s2.reader.as_str(), s2.reader_feedback, s2.reader_beep), ("usb", false, crate::nfc::Beep::Discreet));
-        assert!(s2.auto_close);
+        assert!(s2.auto_close && !s2.app_update_check);
     }
 
     #[test]

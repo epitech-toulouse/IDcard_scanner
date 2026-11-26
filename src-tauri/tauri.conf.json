@@ -29,10 +29,17 @@
     "targets": ["deb", "appimage"],
     "category": "Education",
     "shortDescription": "Émargement des étudiants par carte NFC",
+    "createUpdaterArtifacts": true,
     "resources": { "resources/kiosk/": "kiosk/" },
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png"],
     "linux": {
       "deb": { "depends": ["pcscd", "libccid"] }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI3RkQ2MzRFOTk2MTdBRjIKUldUeWVtR1pUbVA5dC9hWWcwRHFZMFZzaDdYYjUyYjVLVGdDU1NKUjhBeXk2aTNrVitrOGdReG8K",
+      "endpoints": ["https://github.com/epitech-toulouse/IDcard_scanner/releases/latest/download/latest.json"]
     }
   }
 }

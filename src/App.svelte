@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, events } from "./lib/api";
-  import { navigate, reader, route, toast } from "./lib/app.svelte";
+  import { appUpdate, navigate, reader, route, toast } from "./lib/app.svelte";
   import Toasts from "./components/Toasts.svelte";
+  import UpdateBanner from "./components/UpdateBanner.svelte";
   import ReaderIndicator from "./components/ReaderIndicator.svelte";
   import Accueil from "./pages/Accueil.svelte";
   import Emargement from "./pages/Emargement.svelte";
@@ -34,6 +35,11 @@
     const offs = [
       events.onReader((s) => Object.assign(reader, s)),
       events.onError((m) => toast(m, "error", 7000)),
+      events.onAppUpdate((u) => {
+        if (appUpdate.info?.version !== u.version) appUpdate.dismissed = false;
+        appUpdate.info = u;
+      }),
+      events.onAppUpdateProgress((p) => (appUpdate.progress = p)),
       events.onSessionAuto((e) => {
         if (e.action === "open") {
           toast(`Émargement ouvert automatiquement : ${e.title}`, "success", 7000);
@@ -64,6 +70,7 @@
   </nav>
 
   <main>
+    <UpdateBanner />
     {#key page + (param ?? "")}
       {#if page === "accueil"}<Accueil />
       {:else if page === "emargement"}<Emargement sessionId={param} />

@@ -129,6 +129,7 @@ export interface Settings {
   remote_enabled: boolean;
   remote_port: number;
   remote_token: string;
+  app_update_check: boolean;
 }
 
 // update::UpdateOffer (mise à jour de borne publiée)
@@ -175,4 +176,17 @@ export interface CardDiagnostic {
   reader: string;
   student: Student | null;
   scanned_at: Naive;
+}
+
+// app_update::AppUpdate (événement « app-update » : nouvelle version de l'appli)
+export interface AppUpdate {
+  version: string;
+  current: string;
+  notes: string | null;
+}
+
+// app_update::Progress (événement « app-update-progress »)
+export interface AppUpdateProgress {
+  downloaded: number;
+  total: number | null;
 }

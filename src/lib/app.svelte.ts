@@ -1,7 +1,8 @@
 // État global de l'interface : route, statut du lecteur, notifications, dialogues.
 
 import { ask, open, save } from "@tauri-apps/plugin-dialog";
-import type { ReadersStatus } from "./types";
+import type { AppUpdate, AppUpdateProgress, ReadersStatus } from "./types";
+import { api } from "./api";
 
 // ---------- Routage par hash : #/emargement/12 ----------
 
@@ -76,4 +77,32 @@ export async function saveFile(defaultPath: string, filters = XLSX): Promise<str
 
 export async function confirmAction(message: string, title = "Confirmation"): Promise<boolean> {
   return ask(message, { title, kind: "warning", okLabel: "Confirmer", cancelLabel: "Annuler" });
+}
+
+// ---- Mise à jour de l'appli ----
+
+export const appUpdate = $state<{ info: AppUpdate | null; dismissed: boolean; installing: boolean; progress: AppUpdateProgress | null }>({
+  info: null,
+  dismissed: false,
+  installing: false,
+  progress: null,
+});
+
+/** Télécharge et installe la nouvelle version, puis l'appli redémarre d'elle-même. */
+export async function installAppUpdate() {
+  if (!appUpdate.info || appUpdate.installing) return;
+  const ok = await confirmAction(
+    `Installer Badgeuse ${appUpdate.info.version} ?\n\nL'appli redémarre à la fin : les badges passés pendant l'installation (environ une minute) ne sont pas enregistrés. Le mot de passe administrateur peut être demandé.`,
+    "Mise à jour de Badgeuse",
+  );
+  if (!ok) return;
+  appUpdate.installing = true;
+  appUpdate.progress = null;
+  try {
+    await api.appUpdateInstall();
+  } catch (e) {
+    toast(String(e), "error", 9000);
+  } finally {
+    appUpdate.installing = false;
+  }
 }
