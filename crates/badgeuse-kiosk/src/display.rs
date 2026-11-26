@@ -7,8 +7,8 @@ use serde::Serialize;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// Durée d'affichage du résultat d'un badge en grand.
-const SHOW_FOR: Duration = Duration::from_secs(5);
+/// Durée d'affichage par défaut du résultat d'un badge en grand (réglage `show_secs`).
+pub const DEFAULT_SHOW_FOR: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -78,6 +78,7 @@ struct Inner {
 
 pub struct Display {
     inner: Mutex<Inner>,
+    show_for: Mutex<Duration>,
 }
 
 #[derive(Serialize)]
@@ -100,11 +101,17 @@ impl Display {
     pub fn new() -> Display {
         Display {
             inner: Mutex::new(Inner { network: Network::Unknown, pending: 0, session: None, readers: 0, last: None, seq: 0 }),
+            show_for: Mutex::new(DEFAULT_SHOW_FOR),
         }
     }
 
     fn with<R>(&self, f: impl FnOnce(&mut Inner) -> R) -> R {
         f(&mut self.inner.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// Durée pendant laquelle le dernier badge reste affiché en grand.
+    pub fn set_show_for(&self, d: Duration) {
+        *self.show_for.lock().unwrap_or_else(|e| e.into_inner()) = d;
     }
 
     pub fn show(&self, shown: Shown) {
@@ -132,8 +139,9 @@ impl Display {
 
     /// JSON lu par la page (`GET /state`). Le dernier badge disparaît après quelques secondes.
     pub fn state_json(&self) -> String {
+        let show_for = *self.show_for.lock().unwrap_or_else(|e| e.into_inner());
         self.with(|i| {
-            let last = i.last.as_ref().filter(|(_, at, _)| at.elapsed() < SHOW_FOR).map(|(seq, _, s)| LastView { seq: *seq, shown: s });
+            let last = i.last.as_ref().filter(|(_, at, _)| at.elapsed() < show_for).map(|(seq, _, s)| LastView { seq: *seq, shown: s });
             let view = StateView { network: i.network, pending: i.pending, session: i.session.as_deref(), readers: i.readers, last };
             serde_json::to_string(&view).expect("état sérialisable")
         })
@@ -164,7 +172,7 @@ mod tests {
         assert_eq!((v["last"]["seq"].as_u64(), v["last"]["kind"].as_str()), (Some(2), Some("random_uid")));
 
         // Expiré : plus affiché.
-        d.with(|i| i.last.as_mut().unwrap().1 = Instant::now() - SHOW_FOR - Duration::from_secs(1));
+        d.with(|i| i.last.as_mut().unwrap().1 = Instant::now() - DEFAULT_SHOW_FOR - Duration::from_secs(1));
         let v: serde_json::Value = serde_json::from_str(&d.state_json()).unwrap();
         assert!(v["last"].is_null());
     }

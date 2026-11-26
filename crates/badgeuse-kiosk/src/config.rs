@@ -29,6 +29,8 @@ pub struct Config {
     pub update_public_key: String,
     /// Dossier où la borne dépose le paquet vérifié, en attente d'installation par le service root.
     pub update_dir: PathBuf,
+    /// Durée d'affichage du résultat d'un badge, en secondes (1 à 30).
+    pub show_secs: u64,
 }
 
 impl Default for Config {
@@ -44,6 +46,7 @@ impl Default for Config {
             beep: "normal".into(),
             update_public_key: String::new(),
             update_dir: "/var/lib/badgeuse-kiosk/update".into(),
+            show_secs: 2,
         }
     }
 }
@@ -82,6 +85,9 @@ impl Config {
         {
             return Err("update_public_key : 64 caractères hexadécimaux attendus (copier depuis l'appli)".into());
         }
+        if !(1..=30).contains(&self.show_secs) {
+            return Err("show_secs doit être compris entre 1 et 30".into());
+        }
         let addr: SocketAddr = self.listen.parse().map_err(|_| format!("listen invalide : {}", self.listen))?;
         if !addr.ip().is_loopback() {
             return Err("listen doit être une adresse locale (127.0.0.1) : l'affichage n'est pas authentifié".into());
@@ -114,6 +120,7 @@ mod tests {
         assert_eq!((c.token.as_str(), c.device.as_str(), c.reader.as_str()), ("abc", "borne1", "auto"));
         assert_eq!(c.listen, "127.0.0.1:8080");
         assert!(c.feedback);
+        assert_eq!(c.show_secs, 2);
     }
 
     #[test]
@@ -128,6 +135,9 @@ mod tests {
         assert!(with("reader = \"mock\"").is_ok());
         assert!(with("listen = \"0.0.0.0:8080\"").is_err()); // l'affichage reste local
         assert!(with("listen = \"nimporte\"").is_err());
+        assert!(with("show_secs = 0").is_err());
+        assert!(with("show_secs = 31").is_err());
+        assert!(with("show_secs = 4").is_ok());
         assert!(with("inconnu = 1").is_err()); // faute de frappe signalée
         assert!(with("update_public_key = \"abc\"").is_err());
         assert!(with(&format!("update_public_key = \"{}\"", "AB".repeat(32))).is_ok());

@@ -17,6 +17,8 @@ reader = "auto"
 # LED et bip du lecteur ; bip : normal | discreet | silent
 feedback = true
 beep = "normal"
+# Durée d'affichage du résultat d'un badge, en secondes (1 à 30).
+show_secs = 2
 
 # Mise à jour depuis l'appli : clé publique affichée dans Réglages → Bornes réseau → Mise à jour des bornes.
 # Vide = la borne ne se met jamais à jour toute seule. Seul un paquet signé avec la clé privée correspondante

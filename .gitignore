@@ -8,3 +8,6 @@ target/
 # Python
 __pycache__/
 *.pyc
+# Exports de test (données d'étudiants : jamais dans le dépôt)
+/src-tauri/*.xlsx
+/src-tauri/*.csv

@@ -71,6 +71,7 @@ fn main() {
         kiosk = kiosk.with_updates(updater::UpdateConfig { public_key: cfg.update_public_key.clone(), dir: cfg.update_dir.clone() });
     }
     let kiosk = Arc::new(kiosk);
+    kiosk.display.set_show_for(Duration::from_secs(cfg.show_secs));
     let mock = readers::start(kiosk.clone(), &cfg);
     web::spawn(server, kiosk.clone(), mock);
 
