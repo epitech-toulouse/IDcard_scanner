@@ -110,6 +110,12 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Fichiers à plat
+        # upload-artifact garde les sous-dossiers (deb/, appimage/) : la release attend des fichiers.
+        run: |
+          find dist -mindepth 2 -type f -exec mv -t dist {} +
+          find dist -mindepth 1 -type d -empty -delete
+          ls -l dist
       - name: Manifeste de mise à jour (latest.json)
         env:
           VERSION: ${{ needs.version.outputs.version }}
