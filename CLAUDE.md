@@ -36,6 +36,17 @@ Prérequis système (Ubuntu/Debian) :
 Le pilote noyau `pn533_usb` capture l'ACR122U : il faut le blacklister pour PC/SC
 (`/etc/modprobe.d/blacklist-acr122u.conf` → `blacklist pn533_usb`). Le backend USB direct le détache lui-même.
 
+## CI/CD et versions
+
+- `.github/workflows/release.yml` : à chaque push sur `main`, calcule la version (`tools/next_version.sh`), compile la borne
+  (`badgeuse-kiosk_X.Y.Z_arm64.deb`, runner arm64) et l'appli (`.deb` + AppImage, Ubuntu 22.04), crée le tag `vX.Y.Z` et la release
+  GitHub. `[skip release]` dans le message du commit : rien n'est publié.
+- Version = dernier tag + type des commits depuis ce tag : `[breaking]` → majeure (mineure tant qu'on est en 0.x), `[feat]` → mineure,
+  tout le reste → correctif. Sans tag : 0.1.0. La version n'est **jamais commitée** : la CI l'inscrit avant de compiler
+  (`tools/set_version.sh`), les `0.1.0` des `Cargo.toml`/`package.json`/`tauri.conf.json` ne sont donc que des valeurs de dev.
+- Le paquet de la borne est construit sans révision Debian (`--deb-revision ""`) : le nom du fichier est celui lu par l'appli pour
+  « Publier un paquet ». `kiosk.yml` et `app.yml` : tests sur `dev` et les pull requests.
+
 ## Architecture
 
 ```
