@@ -77,7 +77,7 @@ crates/badgeuse-kiosk/   borne de scan (Raspberry Pi) : binaire séparé, sans T
   display.rs web.rs static/index.html   page plein écran servie sur 127.0.0.1:8080 (interrogation de /state, aucune ressource distante)
   readers.rs     lecteurs PC/SC (un thread par lecteur) ou simulé ; dist/ : unités systemd, polkit, scripts du .deb
                  postinst : coupe le bureau (lightdm…, cible multi-user, rétabli par postrm), active borne + affichage si le
-                 jeton est renseigné ; dist/cursor : curseur invisible (XCURSOR_THEME) ; profil Chromium dans /run/badgeuse-display
+                 jeton est renseigné ; dist/cursor : curseur invisible (thème « default » privé via XCURSOR_PATH : cage ignore XCURSOR_THEME) ; Chromium en --password-store=basic (pas de trousseau) ; profil Chromium dans /run/badgeuse-display
 src-tauri/src/
   lib.rs         état (Mutex<Connection>, créneau actif), un thread par lecteur + superviseur PC/SC → événements
   commands.rs    #[tauri::command] fins qui délèguent au core
