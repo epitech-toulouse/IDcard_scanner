@@ -39,14 +39,14 @@ assets = [
   ["dist/49-badgeuse-kiosk.rules", "etc/polkit-1/rules.d/", "644"],
   ["dist/99-badgeuse-display.rules", "lib/udev/rules.d/", "644"],
   # Curseur invisible pour l'affichage (le pavé tactile d'un clavier sans fil ferait apparaître un curseur au milieu de l'écran).
-  ["dist/cursor/index.theme", "usr/share/icons/badgeuse-invisible/", "644"],
-  ["dist/cursor/invisible", "usr/share/icons/badgeuse-invisible/cursors/default", "644"],
-  ["dist/cursor/invisible", "usr/share/icons/badgeuse-invisible/cursors/left_ptr", "644"],
-  ["dist/cursor/invisible", "usr/share/icons/badgeuse-invisible/cursors/arrow", "644"],
-  ["dist/cursor/invisible", "usr/share/icons/badgeuse-invisible/cursors/pointer", "644"],
-  ["dist/cursor/invisible", "usr/share/icons/badgeuse-invisible/cursors/hand2", "644"],
-  ["dist/cursor/invisible", "usr/share/icons/badgeuse-invisible/cursors/text", "644"],
-  ["dist/cursor/invisible", "usr/share/icons/badgeuse-invisible/cursors/xterm", "644"],
+  ["dist/cursor/index.theme", "usr/share/badgeuse-kiosk/cursors/default/", "644"],
+  ["dist/cursor/invisible", "usr/share/badgeuse-kiosk/cursors/default/cursors/default", "644"],
+  ["dist/cursor/invisible", "usr/share/badgeuse-kiosk/cursors/default/cursors/left_ptr", "644"],
+  ["dist/cursor/invisible", "usr/share/badgeuse-kiosk/cursors/default/cursors/arrow", "644"],
+  ["dist/cursor/invisible", "usr/share/badgeuse-kiosk/cursors/default/cursors/pointer", "644"],
+  ["dist/cursor/invisible", "usr/share/badgeuse-kiosk/cursors/default/cursors/hand2", "644"],
+  ["dist/cursor/invisible", "usr/share/badgeuse-kiosk/cursors/default/cursors/text", "644"],
+  ["dist/cursor/invisible", "usr/share/badgeuse-kiosk/cursors/default/cursors/xterm", "644"],
   # Chromium de l'affichage : pas de traduction, de synchro ni de rapports (RGPD). S'applique à tout Chromium du Pi.
   ["dist/chromium-policy.json", "etc/chromium/policies/managed/badgeuse-kiosk.json", "644"],
 ]

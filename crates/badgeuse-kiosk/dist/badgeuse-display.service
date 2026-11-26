@@ -18,14 +18,16 @@ TTYReset=yes
 TTYVHangup=yes
 TTYVTDisallocate=yes
 # Le serveur d'affichage répond sur 127.0.0.1:8080 ; Chromium ne charge rien d'autre.
-# Curseur invisible (thème fourni par le paquet) : l'écran de la borne n'est pas fait pour la souris.
-Environment=XCURSOR_THEME=badgeuse-invisible XCURSOR_SIZE=24
+# Curseur invisible : cage charge toujours le thème « default » ; XCURSOR_PATH le fait trouver dans le thème
+# transparent du paquet (sans toucher aux curseurs du reste du système). L'écran de la borne n'est pas fait pour la souris.
+Environment=XCURSOR_PATH=/usr/share/badgeuse-kiosk/cursors XCURSOR_THEME=default XCURSOR_SIZE=24
+# --password-store=basic : Chromium n'ouvre pas le trousseau GNOME (sinon il demande un mot de passe à chaque démarrage).
 # Profil Chromium privé au service (/run, vidé à l'arrêt) : un Chromium lancé par un autre utilisateur ne peut pas le bloquer.
 RuntimeDirectory=badgeuse-display
 RuntimeDirectoryMode=0700
 # La console 1 doit être active pour que cage obtienne l'écran (après un gestionnaire de connexion, elle reste sur une autre).
 ExecStartPre=+/usr/bin/chvt 1
-ExecStart=/usr/bin/cage -s -- /usr/bin/chromium --kiosk --noerrdialogs --disable-infobars --no-first-run --disable-translate --user-data-dir=/run/badgeuse-display --disk-cache-dir=/dev/null --ozone-platform=wayland --disable-background-networking --disable-component-update --disable-sync --disable-breakpad --disable-crash-reporter --disable-default-apps --disable-extensions --disable-dev-shm-usage --disable-features=Translate,MediaRouter,OptimizationHints,InterestFeedContentSuggestions --no-pings --noproxy-server --autoplay-policy=no-user-gesture-required --renderer-process-limit=1 --js-flags=--max-old-space-size=48 http://127.0.0.1:8080
+ExecStart=/usr/bin/cage -s -- /usr/bin/chromium --kiosk --password-store=basic --noerrdialogs --disable-infobars --no-first-run --disable-translate --user-data-dir=/run/badgeuse-display --disk-cache-dir=/dev/null --ozone-platform=wayland --disable-background-networking --disable-component-update --disable-sync --disable-breakpad --disable-crash-reporter --disable-default-apps --disable-extensions --disable-dev-shm-usage --disable-features=Translate,MediaRouter,OptimizationHints,InterestFeedContentSuggestions --no-pings --noproxy-server --autoplay-policy=no-user-gesture-required --renderer-process-limit=1 --js-flags=--max-old-space-size=48 http://127.0.0.1:8080
 Restart=always
 RestartSec=3
 # Le lecteur NFC passe avant l'affichage quand le Pi est chargé.
