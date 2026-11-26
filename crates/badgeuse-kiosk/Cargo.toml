@@ -36,4 +36,7 @@ assets = [
   ["dist/badgeuse-kiosk-update.path", "lib/systemd/system/", "644"],
   ["dist/blacklist-acr122u.conf", "etc/modprobe.d/", "644"],
   ["dist/49-badgeuse-kiosk.rules", "etc/polkit-1/rules.d/", "644"],
+  ["dist/99-badgeuse-display.rules", "lib/udev/rules.d/", "644"],
+  # Chromium de l'affichage : pas de traduction, de synchro ni de rapports (RGPD). S'applique à tout Chromium du Pi.
+  ["dist/chromium-policy.json", "etc/chromium/policies/managed/badgeuse-kiosk.json", "644"],
 ]

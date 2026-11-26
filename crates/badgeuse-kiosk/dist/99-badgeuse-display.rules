@@ -1,0 +1,4 @@
+# Écran HDMI branché ou débranché : relance l'affichage de la borne (s'il est activé) pour qu'il prenne
+# le nouvel écran et sa résolution, même si le Pi a démarré sans écran.
+ACTION=="change", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", ENV{HOTPLUG}=="1", \
+  RUN+="/bin/sh -c 'systemctl -q is-enabled badgeuse-display.service && systemctl --no-block restart badgeuse-display.service || true'"
