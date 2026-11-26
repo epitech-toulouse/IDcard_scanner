@@ -128,6 +128,15 @@ pub fn version_from_deb_name(file_name: &str) -> Option<String> {
     (name == "badgeuse-kiosk" && valid_version(version)).then(|| version.to_string())
 }
 
+/// Parmi des noms de fichiers, le paquet de borne de version la plus récente : `(version, nom)`.
+/// Sert à trouver le paquet embarqué dans l'appli par la CI.
+pub fn newest_package<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<(String, &'a str)> {
+    names
+        .into_iter()
+        .filter_map(|n| version_from_deb_name(n).map(|v| (v, n)))
+        .reduce(|best, cand| if is_newer(&cand.0, &best.0) { cand } else { best })
+}
+
 // ---- Stockage côté appli (table des réglages) ----
 
 const SECRET_KEY: &str = "kiosk_update_secret";
@@ -243,5 +252,13 @@ mod tests {
         assert_eq!(version_from_deb_name("autre_0.3.0_arm64.deb"), None);
         assert_eq!(version_from_deb_name("badgeuse-kiosk_arm64.deb"), None);
         assert_eq!(version_from_deb_name("badgeuse-kiosk_0.3.0_arm64.zip"), None);
+    }
+
+    #[test]
+    fn newest_bundled_package() {
+        let names = [".gitkeep", "badgeuse-kiosk_0.9.0_arm64.deb", "badgeuse-kiosk_0.10.0_arm64.deb", "autre_9.0.0_arm64.deb"];
+        assert_eq!(newest_package(names), Some(("0.10.0".into(), "badgeuse-kiosk_0.10.0_arm64.deb")));
+        assert_eq!(newest_package([".gitkeep"]), None);
+        assert_eq!(newest_package([]), None);
     }
 }

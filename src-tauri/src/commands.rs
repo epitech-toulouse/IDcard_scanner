@@ -14,7 +14,7 @@ use badgeuse_core::{Error, Result, db, sessions, students};
 use chrono::NaiveDateTime;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 type S<'a> = State<'a, AppState>;
 
@@ -304,22 +304,36 @@ pub struct UpdateInfo {
     pub public_key: Option<String>,
     /// Mise à jour actuellement proposée aux bornes.
     pub offer: Option<UpdateOffer>,
+    /// Version du paquet de borne embarqué dans cette appli (par la CI) ; `None` en développement.
+    pub bundled: Option<String>,
 }
 
-fn update_info_of(state: &AppState) -> Result<UpdateInfo> {
+/// Paquet de borne embarqué dans l'appli : `(version, chemin)`. La CI le dépose dans `src-tauri/resources/kiosk/`.
+fn bundled_package(app: &AppHandle) -> Option<(String, PathBuf)> {
+    let dir = app.path().resource_dir().ok()?.join("kiosk");
+    let names: Vec<String> = std::fs::read_dir(&dir).ok()?.filter_map(|e| e.ok()?.file_name().into_string().ok()).collect();
+    let (version, name) = update::newest_package(names.iter().map(String::as_str))?;
+    Some((version, dir.join(name)))
+}
+
+fn update_info_of(app: &AppHandle, state: &AppState) -> Result<UpdateInfo> {
     let c = state.db();
-    Ok(UpdateInfo { public_key: update::public_key(&c)?, offer: update::published(&c)? })
+    Ok(UpdateInfo {
+        public_key: update::public_key(&c)?,
+        offer: update::published(&c)?,
+        bundled: bundled_package(app).map(|(v, _)| v),
+    })
 }
 
 #[tauri::command]
-pub fn update_info(state: S) -> Result<UpdateInfo> {
-    update_info_of(&state)
+pub fn update_info(app: AppHandle, state: S) -> Result<UpdateInfo> {
+    update_info_of(&app, &state)
 }
 
 /// Crée la paire de clés de signature. `regenerate` : en refait une (les bornes devront recevoir la nouvelle
 /// clé publique, et la mise à jour publiée est retirée).
 #[tauri::command]
-pub fn update_generate_keys(state: S, regenerate: bool) -> Result<UpdateInfo> {
+pub fn update_generate_keys(app: AppHandle, state: S, regenerate: bool) -> Result<UpdateInfo> {
     {
         let c = state.db();
         update::ensure_keys(&c, regenerate)?;
@@ -327,12 +341,11 @@ pub fn update_generate_keys(state: S, regenerate: bool) -> Result<UpdateInfo> {
             let _ = std::fs::remove_file(update_package_path(&state));
         }
     }
-    update_info_of(&state)
+    update_info_of(&app, &state)
 }
 
-/// Publie un paquet `badgeuse-kiosk_<version>_arm64.deb` : l'appli le signe et le propose aux bornes.
-#[tauri::command]
-pub fn update_publish(state: S, path: PathBuf) -> Result<UpdateInfo> {
+/// Signe un paquet `badgeuse-kiosk_<version>_arm64.deb`, le range à côté de la base et le propose aux bornes.
+fn publish_file(state: &AppState, path: &std::path::Path) -> Result<()> {
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
     let version = update::version_from_deb_name(name)
         .ok_or_else(|| Error::Invalid("Nom de fichier attendu : badgeuse-kiosk_<version>_arm64.deb".into()))?;
@@ -354,13 +367,40 @@ pub fn update_publish(state: S, path: PathBuf) -> Result<UpdateInfo> {
         let _ = std::fs::remove_file(&dest);
         return Err(e);
     }
-    update_info_of(&state)
+    Ok(())
+}
+
+/// Publie un paquet choisi à la main (paquet plus récent que l'appli, ou appli de développement).
+#[tauri::command]
+pub fn update_publish(app: AppHandle, state: S, path: PathBuf) -> Result<UpdateInfo> {
+    publish_file(&state, &path)?;
+    update_info_of(&app, &state)
+}
+
+/// « Mettre à jour les bornes » : propose aux bornes le paquet embarqué dans l'appli, en un clic.
+/// Crée la clé de signature au besoin ; ne remplace jamais une version proposée plus récente.
+#[tauri::command]
+pub fn update_publish_bundled(app: AppHandle, state: S) -> Result<UpdateInfo> {
+    let (version, path) = bundled_package(&app)
+        .ok_or_else(|| Error::Invalid("Aucun paquet de borne dans cette version de l'appli (version de développement ?)".into()))?;
+    let current = update::published(&state.db())?;
+    match current {
+        Some(o) if o.version == version => {}
+        Some(o) if update::is_newer(&o.version, &version) => {
+            return Err(Error::Invalid(format!(
+                "La version {} est déjà proposée aux bornes, plus récente que celle de l'appli ({version})",
+                o.version
+            )));
+        }
+        _ => publish_file(&state, &path)?,
+    }
+    update_info_of(&app, &state)
 }
 
 /// Retire la mise à jour proposée : les bornes ne la téléchargent plus.
 #[tauri::command]
-pub fn update_unpublish(state: S) -> Result<UpdateInfo> {
+pub fn update_unpublish(app: AppHandle, state: S) -> Result<UpdateInfo> {
     update::unpublish(&state.db())?;
     let _ = std::fs::remove_file(update_package_path(&state));
-    update_info_of(&state)
+    update_info_of(&app, &state)
 }

@@ -11,7 +11,9 @@
   let dataPath = $state("");
   let localIp = $state<string | null>(null);
 
-  let upd = $state<UpdateInfo>({ public_key: null, offer: null });
+  let upd = $state<UpdateInfo>({ public_key: null, offer: null, bundled: null });
+  // Le paquet embarqué est déjà celui proposé aux bornes : rien à faire.
+  const upToDate = $derived(upd.bundled !== null && upd.offer?.version === upd.bundled);
   const DEB = [{ name: "Paquet de la borne", extensions: ["deb"] }];
 
   const remoteKey = (s: Settings | null) => `${s?.remote_enabled}:${s?.remote_port}`;
@@ -41,6 +43,14 @@
     if (next) {
       upd = next;
       toast(`Mise à jour ${next.offer?.version} proposée aux bornes : elles l'installent quand plus personne ne badge`, "success", 7000);
+    }
+  }
+
+  async function updateKiosks() {
+    const next = await guard(api.updatePublishBundled());
+    if (next) {
+      upd = next;
+      toast(`Version ${next.offer?.version} envoyée aux bornes : chacune l'installe dès que plus personne ne badge (environ une minute)`, "success", 7000);
     }
   }
 
@@ -217,33 +227,47 @@
     <section class="card">
       <h2>Mise à jour des bornes</h2>
       <p class="small">
-        Publiez ici le paquet <span class="mono">badgeuse-kiosk_&lt;version&gt;_arm64.deb</span> (produit par la CI) : l'appli le signe et les
-        bornes l'installent d'elles-mêmes, quand personne n'a badgé depuis une minute et que leur file est vide. Une borne
-        n'accepte que les paquets signés avec la clé de cet ordinateur.
+        Un clic suffit : l'appli contient le paquet de la borne de sa propre version. Elle le signe et les bornes l'installent
+        d'elles-mêmes dès que personne n'a badgé depuis une minute et que leur file est vide. Une borne n'accepte que les paquets
+        signés avec la clé de cet ordinateur.
       </p>
       {#if !upd.public_key}
+        <p class="small">Avant la première mise à jour, créez la clé et copiez-la une fois sur chaque borne.</p>
         <button onclick={createKeys}>Créer la clé de signature</button>
       {:else}
-        <label class="field">
-          Clé publique, à copier dans <span class="mono">update_public_key</span> de <span class="mono">/etc/badgeuse-kiosk.toml</span> (une fois par borne)
-          <span class="row">
-            <input class="mono grow" readonly value={upd.public_key} onfocus={(e) => e.currentTarget.select()} />
-            <button onclick={copyKey}>Copier</button>
-            <button onclick={regenerateKeys}>Régénérer</button>
-          </span>
-        </label>
+        <div class="row">
+          {#if upd.bundled}
+            <button class="primary" onclick={updateKiosks} disabled={!settings.remote_enabled || upToDate}>
+              {upToDate ? `Bornes en version ${upd.bundled}` : `Mettre à jour les bornes (version ${upd.bundled})`}
+            </button>
+          {:else}
+            <span class="muted small">Pas de paquet de borne dans cette appli (version de développement).</span>
+          {/if}
+          {#if upd.offer}<button onclick={withdrawUpdate}>Retirer</button>{/if}
+        </div>
+        {#if !settings.remote_enabled}<p class="muted small">Activez d'abord les bornes réseau ci-dessus.</p>{/if}
         <p class="small">
           {#if upd.offer}
-            Mise à jour proposée : <strong>version {upd.offer.version}</strong> ({(upd.offer.size / 1048576).toFixed(1)} Mo).
+            Proposée aux bornes : <strong>version {upd.offer.version}</strong> ({(upd.offer.size / 1048576).toFixed(1)} Mo).
           {:else}
             Aucune mise à jour proposée.
           {/if}
         </p>
-        <div class="row">
-          <button class="primary" onclick={publishUpdate} disabled={!settings.remote_enabled}>Publier un paquet…</button>
-          {#if upd.offer}<button onclick={withdrawUpdate}>Retirer</button>{/if}
-        </div>
-        {#if !settings.remote_enabled}<p class="muted small">Activez d'abord les bornes réseau ci-dessus.</p>{/if}
+        <details>
+          <summary class="small">Avancé</summary>
+          <label class="field">
+            Clé publique, à copier dans <span class="mono">update_public_key</span> de <span class="mono">/etc/badgeuse-kiosk.toml</span> (une fois par borne)
+            <span class="row">
+              <input class="mono grow" readonly value={upd.public_key} onfocus={(e) => e.currentTarget.select()} />
+              <button onclick={copyKey}>Copier</button>
+              <button onclick={regenerateKeys}>Régénérer</button>
+            </span>
+          </label>
+          <div class="row">
+            <button onclick={publishUpdate} disabled={!settings.remote_enabled}>Publier un autre paquet…</button>
+            <span class="muted small">fichier <span class="mono">badgeuse-kiosk_&lt;version&gt;_arm64.deb</span> d'une release</span>
+          </div>
+        </details>
       {/if}
       <p class="muted small">
         La version installée de chaque borne s'affiche dans la liste des lecteurs. Une borne n'installe jamais une version plus

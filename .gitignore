@@ -11,3 +11,5 @@ __pycache__/
 # Exports de test (données d'étudiants : jamais dans le dépôt)
 /src-tauri/*.xlsx
 /src-tauri/*.csv
+# Paquet de la borne embarqué dans l'appli : déposé par la CI (release.yml), jamais commité
+/src-tauri/resources/kiosk/*.deb

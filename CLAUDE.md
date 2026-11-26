@@ -44,6 +44,7 @@ Le pilote noyau `pn533_usb` capture l'ACR122U : il faut le blacklister pour PC/S
 - Version = dernier tag + type des commits depuis ce tag : `[breaking]` → majeure (mineure tant qu'on est en 0.x), `[feat]` → mineure,
   tout le reste → correctif. Sans tag : 0.1.0. La version n'est **jamais commitée** : la CI l'inscrit avant de compiler
   (`tools/set_version.sh`), les `0.1.0` des `Cargo.toml`/`package.json`/`tauri.conf.json` ne sont donc que des valeurs de dev.
+- Le job `app` attend `kiosk` : le `.deb` de la borne est embarqué dans l'appli (aucun téléchargement à l'exécution, le dépôt est privé).
 - Le paquet de la borne est construit sans révision Debian (`--deb-revision ""`) : le nom du fichier est celui lu par l'appli pour
   « Publier un paquet ». `kiosk.yml` et `app.yml` : tests sur `dev` et les pull requests.
 
@@ -101,8 +102,9 @@ Flux d'un badge de **borne** (réglage `remote_enabled`, désactivé par défaut
    En mode « Test cartes », un badge rejoué (`RemoteScan::is_replay`) est refusé en 503 pour que la borne le garde.
    Une borne apparaît dans `ReadersStatus` (`backend: "remote"`, nom `borne:<device>`), hors ligne après 30 s sans signal.
 
-**Mise à jour des bornes** (Réglages → Bornes réseau → Mise à jour) : l'enseignant publie un `badgeuse-kiosk_<version>_arm64.deb` ;
-l'appli le range dans `<données>/kiosk-update/`, le signe (Ed25519, clé privée en base, jamais envoyée) et l'annonce dans la réponse au
+**Mise à jour des bornes** (Réglages → Mise à jour des bornes) : en un clic, « Mettre à jour les bornes » publie le
+`badgeuse-kiosk_<version>_arm64.deb` embarqué dans l'appli (ressource `kiosk/`, déposée par la CI dans `src-tauri/resources/kiosk/` ;
+vide en dev, où « Avancé → Publier un autre paquet… » reste possible). Jamais de remplacement d'une offre plus récente. L'appli le range dans `<données>/kiosk-update/`, le signe (Ed25519, clé privée en base, jamais envoyée) et l'annonce dans la réponse au
 signal de vie (`HeartbeatReply.update`) ; la borne le télécharge (`GET /api/update/package`, jeton) si elle est au repos (file vide,
 aucun badge depuis 60 s), contrôle signature + empreinte avec `update_public_key` (config de la borne, vide = désactivé) et le dépose
 dans `/var/lib/badgeuse-kiosk/update/`. `badgeuse-kiosk-update.path` déclenche alors `badgeuse-kiosk-update.service` (root) :
