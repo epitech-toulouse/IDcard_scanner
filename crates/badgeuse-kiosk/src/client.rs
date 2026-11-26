@@ -21,10 +21,14 @@ pub enum SendError {
 pub trait Transport: Send + Sync {
     fn send_scan(&self, scan: &RemoteScan) -> Result<RemoteReply, SendError>;
     fn heartbeat(&self, pending: u32) -> Result<HeartbeatReply, SendError>;
+    /// Télécharge le paquet de mise à jour publié par l'appli (au plus `max` octets).
+    fn fetch_package(&self, max: u64) -> Result<Vec<u8>, SendError>;
 }
 
 pub struct HttpClient {
     agent: ureq::Agent,
+    /// Agent pour le téléchargement d'un paquet : délai global long (quelques Mo en Wi-Fi).
+    download: ureq::Agent,
     base: String,
     auth: String,
     device: String,
@@ -40,7 +44,13 @@ impl HttpClient {
             .http_status_as_error(false)
             .build()
             .into();
-        HttpClient { agent, base: cfg.server_url.clone(), auth: format!("Bearer {}", cfg.token), device: cfg.device.clone() }
+        let download: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_connect(Some(Duration::from_secs(2)))
+            .timeout_global(Some(Duration::from_secs(300)))
+            .http_status_as_error(false)
+            .build()
+            .into();
+        HttpClient { agent, download, base: cfg.server_url.clone(), auth: format!("Bearer {}", cfg.token), device: cfg.device.clone() }
     }
 
     fn post<B: Serialize, R: DeserializeOwned>(&self, path: &str, body: &B) -> Result<R, SendError> {
@@ -71,6 +81,28 @@ impl Transport for HttpClient {
     }
 
     fn heartbeat(&self, pending: u32) -> Result<HeartbeatReply, SendError> {
-        self.post("/api/heartbeat", &RemoteHeartbeat { device: self.device.clone(), pending })
+        self.post(
+            "/api/heartbeat",
+            &RemoteHeartbeat { device: self.device.clone(), pending, version: Some(crate::updater::CURRENT.into()) },
+        )
+    }
+
+    fn fetch_package(&self, max: u64) -> Result<Vec<u8>, SendError> {
+        let mut resp = self
+            .download
+            .get(format!("{}/api/update/package", self.base))
+            .header("Authorization", &self.auth)
+            .call()
+            .map_err(|e| SendError::Retry(e.to_string()))?;
+        match resp.status().as_u16() {
+            200 => resp
+                .body_mut()
+                .with_config()
+                .limit(max)
+                .read_to_vec()
+                .map_err(|e| SendError::Retry(format!("téléchargement interrompu : {e}"))),
+            401 => Err(SendError::Unauthorized),
+            code => Err(SendError::Retry(format!("HTTP {code}"))),
+        }
     }
 }

@@ -46,11 +46,11 @@ impl Default for Settings {
     }
 }
 
-fn get_raw(c: &Connection, key: &str) -> Result<Option<String>> {
+pub(crate) fn get_raw(c: &Connection, key: &str) -> Result<Option<String>> {
     Ok(c.query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0)).optional()?)
 }
 
-fn set_raw(c: &Connection, key: &str, value: &str) -> Result<()> {
+pub(crate) fn set_raw(c: &Connection, key: &str, value: &str) -> Result<()> {
     c.execute(
         "INSERT INTO settings(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         params![key, value],
