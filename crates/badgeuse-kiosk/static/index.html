@@ -118,8 +118,14 @@
   const STATUS = { present: "Présent", late: "En retard" };
   let lastSeq = 0;
 
+  const fmt = new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  let shownClock = "";
   function clock() {
-    $("clock").textContent = new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+    const t = fmt.format(new Date());
+    if (t !== shownClock) { // l'affichage ne change qu'une fois par minute : pas de réécriture du DOM
+      shownClock = t;
+      $("clock").textContent = t;
+    }
   }
 
   function network(s) {
@@ -167,13 +173,19 @@
     }
   }
 
+  let lastRaw = "";
+  let down = false;
   async function tick() {
     try {
       const r = await fetch("/state", { cache: "no-store" });
-      render(await r.json());
-      $("noapp").hidden = true;
+      const raw = await r.text();
+      if (raw !== lastRaw) { // rien n'a changé : on ne touche pas au DOM (le Pi n'a pas à repeindre)
+        lastRaw = raw;
+        render(JSON.parse(raw));
+      }
+      if (down) { down = false; $("noapp").hidden = true; }
     } catch {
-      $("noapp").hidden = false;
+      if (!down) { down = true; $("noapp").hidden = false; }
     }
   }
 
@@ -185,7 +197,7 @@
   });
 
   clock();
-  setInterval(clock, 1000);
+  setInterval(clock, 5000);
   tick();
   setInterval(tick, 500);
 </script>
