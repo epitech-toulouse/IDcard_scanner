@@ -287,6 +287,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::update_info,
+            commands::update_generate_keys,
+            commands::update_publish,
+            commands::update_unpublish,
             commands::tree,
             commands::create_program,
             commands::create_cohort,

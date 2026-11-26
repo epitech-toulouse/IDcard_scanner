@@ -43,6 +43,9 @@ pub struct RemoteHeartbeat {
     pub device: String,
     /// Badges en attente d'envoi dans la file de la borne.
     pub pending: u32,
+    /// Version installée sur la borne (absente des anciennes bornes).
+    #[serde(default)]
+    pub version: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,6 +79,9 @@ pub struct RemoteReply {
 pub struct HeartbeatReply {
     /// Intitulé du créneau ouvert qui reçoit les badges, s'il y en a un.
     pub session_title: Option<String>,
+    /// Mise à jour publiée dans l'appli, s'il y en a une (la borne décide si elle est plus récente).
+    #[serde(default)]
+    pub update: Option<crate::update::UpdateOffer>,
 }
 
 /// Résultat du traitement d'un badge distant. `outcome` vaut `None` pour un rejeu déjà traité

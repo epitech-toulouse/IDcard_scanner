@@ -18,6 +18,9 @@ where
         id: id.clone(),
         feedback: Arc::new(AtomicBool::new(cfg.feedback)),
         beep: Arc::new(AtomicU8::new(cfg.beep_level().as_u8())),
+        // PC/SC réveille le thread dès qu'une carte arrive : le délai n'est qu'un garde-fou, inutile de
+        // se réveiller 3 fois par seconde et par lecteur sur un Raspberry Pi.
+        poll: Duration::from_secs(2),
         ..Default::default()
     };
     std::thread::Builder::new()

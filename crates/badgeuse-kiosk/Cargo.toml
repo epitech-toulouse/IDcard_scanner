@@ -32,6 +32,8 @@ assets = [
   ["dist/badgeuse-kiosk.toml", "etc/badgeuse-kiosk.toml", "640"],
   ["dist/badgeuse-kiosk.service", "lib/systemd/system/", "644"],
   ["dist/badgeuse-display.service", "lib/systemd/system/", "644"],
+  ["dist/badgeuse-kiosk-update.service", "lib/systemd/system/", "644"],
+  ["dist/badgeuse-kiosk-update.path", "lib/systemd/system/", "644"],
   ["dist/blacklist-acr122u.conf", "etc/modprobe.d/", "644"],
   ["dist/49-badgeuse-kiosk.rules", "etc/polkit-1/rules.d/", "644"],
 ]

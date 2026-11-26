@@ -1,0 +1,24 @@
+[Unit]
+Description=Borne Badgeuse : lecture NFC et envoi des badges
+After=network-online.target pcscd.service
+Wants=network-online.target pcscd.service
+
+[Service]
+User=badgeuse-kiosk
+ExecStart=/usr/bin/badgeuse-kiosk --config /etc/badgeuse-kiosk.toml
+Restart=always
+RestartSec=3
+# Priorité au badge : le service passe avant l'affichage et le reste du système.
+Nice=-5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=2
+MemoryMax=64M
+# File d'attente des badges : /var/lib/badgeuse-kiosk (créé au démarrage, propriété du service).
+StateDirectory=badgeuse-kiosk
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -24,6 +24,11 @@ pub struct Config {
     pub feedback: bool,
     /// normal | discreet | silent
     pub beep: String,
+    /// Clé publique (hexadécimal) affichée dans Réglages → Bornes réseau → Mise à jour. Vide : la borne
+    /// ne se met jamais à jour toute seule.
+    pub update_public_key: String,
+    /// Dossier où la borne dépose le paquet vérifié, en attente d'installation par le service root.
+    pub update_dir: PathBuf,
 }
 
 impl Default for Config {
@@ -37,6 +42,8 @@ impl Default for Config {
             queue_path: "/var/lib/badgeuse-kiosk/queue.db".into(),
             feedback: true,
             beep: "normal".into(),
+            update_public_key: String::new(),
+            update_dir: "/var/lib/badgeuse-kiosk/update".into(),
         }
     }
 }
@@ -47,6 +54,7 @@ impl Config {
         cfg.server_url = cfg.server_url.trim().trim_end_matches('/').to_string();
         cfg.token = cfg.token.trim().to_string();
         cfg.device = cfg.device.trim().to_string();
+        cfg.update_public_key = cfg.update_public_key.trim().to_ascii_lowercase();
         cfg.validate()?;
         Ok(cfg)
     }
@@ -68,6 +76,11 @@ impl Config {
         }
         if matches!(self.reader_kind()?, ReaderKind::Usb) {
             return Err("reader = usb n'est pas pris en charge sur la borne (utilisez auto, pcsc ou mock)".into());
+        }
+        if !self.update_public_key.is_empty()
+            && !(self.update_public_key.len() == 64 && self.update_public_key.chars().all(|c| c.is_ascii_hexdigit()))
+        {
+            return Err("update_public_key : 64 caractères hexadécimaux attendus (copier depuis l'appli)".into());
         }
         let addr: SocketAddr = self.listen.parse().map_err(|_| format!("listen invalide : {}", self.listen))?;
         if !addr.ip().is_loopback() {
@@ -116,5 +129,8 @@ mod tests {
         assert!(with("listen = \"0.0.0.0:8080\"").is_err()); // l'affichage reste local
         assert!(with("listen = \"nimporte\"").is_err());
         assert!(with("inconnu = 1").is_err()); // faute de frappe signalée
+        assert!(with("update_public_key = \"abc\"").is_err());
+        assert!(with(&format!("update_public_key = \"{}\"", "AB".repeat(32))).is_ok());
+        assert!(Config::parse(OK).unwrap().update_public_key.is_empty()); // désactivé par défaut
     }
 }

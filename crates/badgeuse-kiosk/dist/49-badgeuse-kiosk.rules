@@ -1,0 +1,9 @@
+// pcscd refuse l'accès aux lecteurs aux services sans session graphique active.
+// Ce service dédié (sans session) y est autorisé explicitement.
+polkit.addRule(function(action, subject) {
+    if ((action.id == "org.debian.pcsc-lite.access_pcsc" ||
+         action.id == "org.debian.pcsc-lite.access_card") &&
+        subject.user == "badgeuse-kiosk") {
+        return polkit.Result.YES;
+    }
+});

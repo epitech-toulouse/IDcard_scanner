@@ -14,5 +14,6 @@ pub mod remote;
 pub mod sessions;
 pub mod settings;
 pub mod students;
+pub mod update;
 
 pub use error::{Error, Result};

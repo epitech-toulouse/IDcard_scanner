@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "purge" ]; then
+    # Les badges non transmis disparaissent avec la purge.
+    rm -rf /var/lib/badgeuse-kiosk
+    deluser --system badgeuse-kiosk >/dev/null 2>&1 || true
+    deluser --system badgeuse-display >/dev/null 2>&1 || true
+fi
+
+systemctl daemon-reload >/dev/null 2>&1 || true
+exit 0
