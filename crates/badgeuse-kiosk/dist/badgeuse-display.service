@@ -18,6 +18,8 @@ TTYReset=yes
 TTYVHangup=yes
 TTYVTDisallocate=yes
 # Le serveur d'affichage répond sur 127.0.0.1:8080 ; Chromium ne charge rien d'autre.
+# Curseur invisible (thème fourni par le paquet) : l'écran de la borne n'est pas fait pour la souris.
+Environment=XCURSOR_THEME=badgeuse-invisible XCURSOR_SIZE=24
 # Profil Chromium privé au service (/run, vidé à l'arrêt) : un Chromium lancé par un autre utilisateur ne peut pas le bloquer.
 RuntimeDirectory=badgeuse-display
 RuntimeDirectoryMode=0700
