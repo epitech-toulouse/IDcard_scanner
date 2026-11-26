@@ -1,0 +1,15 @@
+[Unit]
+Description=Installation de la mise à jour de la borne Badgeuse
+# Pas de démarrage au boot : uniquement déclenché par badgeuse-kiosk-update.path.
+RefuseManualStart=no
+
+[Service]
+Type=oneshot
+# Root : le binaire revérifie la signature (clé publique de /etc/badgeuse-kiosk.toml) et l'empreinte du
+# paquet, le recopie dans un dossier réservé à root, puis lance dpkg. Voir src/updater.rs.
+ExecStart=/usr/bin/badgeuse-kiosk --config /etc/badgeuse-kiosk.toml --apply-update
+RuntimeDirectory=badgeuse-kiosk-update
+RuntimeDirectoryMode=0700
+PrivateTmp=true
+ProtectHome=true
+# Une mise à jour ratée ne doit pas se rejouer en boucle : le dépôt est supprimé dans tous les cas.

@@ -1,0 +1,32 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    # Service de lecture : utilisateur système dédié, sans shell.
+    if ! getent passwd badgeuse-kiosk >/dev/null; then
+        adduser --system --group --no-create-home --home /var/lib/badgeuse-kiosk badgeuse-kiosk
+    fi
+    # Affichage : accès à l'écran et aux périphériques de saisie (cage / Chromium).
+    if ! getent passwd badgeuse-display >/dev/null; then
+        adduser --system --group --home /var/lib/badgeuse-display --shell /usr/sbin/nologin badgeuse-display
+        for g in video render input; do
+            getent group "$g" >/dev/null && adduser badgeuse-display "$g" >/dev/null || true
+        done
+    fi
+    # Le fichier de configuration contient le jeton : lisible par le service uniquement.
+    if [ -f /etc/badgeuse-kiosk.toml ]; then
+        chown root:badgeuse-kiosk /etc/badgeuse-kiosk.toml
+        chmod 640 /etc/badgeuse-kiosk.toml
+    fi
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    # Mise à jour depuis l'appli : l'unité .path surveille le dépôt du paquet (inoffensive sans clé publique).
+    systemctl enable --now badgeuse-kiosk-update.path >/dev/null 2>&1 || true
+    # Mise à jour d'une borne déjà en service : on relance la lecture avec le nouveau binaire.
+    if [ -n "$2" ] && systemctl is-active --quiet badgeuse-kiosk; then
+        systemctl restart badgeuse-kiosk >/dev/null 2>&1 || true
+    fi
+    # Pas de démarrage automatique : la configuration (adresse, jeton) doit d'abord être renseignée.
+    echo "badgeuse-kiosk : renseignez /etc/badgeuse-kiosk.toml puis : sudo systemctl enable --now badgeuse-kiosk badgeuse-display"
+fi
+
+exit 0
