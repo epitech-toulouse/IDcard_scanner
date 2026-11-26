@@ -1,0 +1,29 @@
+# Borne Badgeuse : à adapter, puis `sudo systemctl restart badgeuse-kiosk`.
+# Ce fichier contient le jeton : il n'est lisible que par root et le service.
+
+# Adresse de l'appli Badgeuse sur le PC de l'enseignant (HTTP, réseau local uniquement).
+# L'appli l'affiche dans Réglages → Bornes réseau. Un nom mDNS (pc-prof.local) fonctionne si avahi-daemon tourne.
+server_url = "http://192.168.1.20:8737"
+
+# Jeton copié depuis Réglages → Bornes réseau.
+token = ""
+
+# Nom de cette borne (lettres, chiffres, - et _). Un nom différent par borne.
+device = "borne1"
+
+# auto | pcsc | mock   (mock : lecteur simulé avec un champ « Badger » à l'écran, pour essayer sans lecteur)
+reader = "auto"
+
+# LED et bip du lecteur ; bip : normal | discreet | silent
+feedback = true
+beep = "normal"
+
+# Mise à jour depuis l'appli : clé publique affichée dans Réglages → Bornes réseau → Mise à jour des bornes.
+# Vide = la borne ne se met jamais à jour toute seule. Seul un paquet signé avec la clé privée correspondante
+# (gardée dans l'appli) est installé : le jeton ci-dessus ne suffit pas.
+update_public_key = ""
+
+# Avancé (valeurs par défaut) :
+# listen = "127.0.0.1:8080"                      # affichage : toujours local
+# queue_path = "/var/lib/badgeuse-kiosk/queue.db" # badges en attente d'envoi
+# update_dir = "/var/lib/badgeuse-kiosk/update"   # paquet vérifié, en attente d'installation

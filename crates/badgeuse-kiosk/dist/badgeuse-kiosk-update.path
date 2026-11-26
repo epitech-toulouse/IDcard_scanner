@@ -1,0 +1,10 @@
+[Unit]
+Description=Mise à jour de la borne Badgeuse : paquet déposé, en attente d'installation
+
+[Path]
+# pending.json est écrit en dernier par la borne, une fois le paquet téléchargé et vérifié.
+PathExists=/var/lib/badgeuse-kiosk/update/pending.json
+Unit=badgeuse-kiosk-update.service
+
+[Install]
+WantedBy=multi-user.target
