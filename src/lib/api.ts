@@ -69,6 +69,8 @@ export const api = {
   updateInfo: () => invoke<T.UpdateInfo>("update_info"),
   updateGenerateKeys: (regenerate: boolean) => invoke<T.UpdateInfo>("update_generate_keys", { regenerate }),
   updatePublish: (path: string) => invoke<T.UpdateInfo>("update_publish", { path }),
+  appUpdateCheck: () => invoke<T.AppUpdate | null>("app_update_check"),
+  appUpdateInstall: () => invoke<void>("app_update_install"),
   updatePublishBundled: () => invoke<T.UpdateInfo>("update_publish_bundled"),
   updateUnpublish: () => invoke<T.UpdateInfo>("update_unpublish"),
   localAddress: () => invoke<string | null>("local_address"),
@@ -81,6 +83,10 @@ export const events = {
     listen<T.ReadersStatus>("reader-status", (e) => cb(e.payload)),
   onCardTest: (cb: (d: T.CardDiagnostic) => void): Promise<UnlistenFn> =>
     listen<T.CardDiagnostic>("card-test", (e) => cb(e.payload)),
+  onAppUpdate: (cb: (u: T.AppUpdate) => void): Promise<UnlistenFn> =>
+    listen<T.AppUpdate>("app-update", (e) => cb(e.payload)),
+  onAppUpdateProgress: (cb: (p: T.AppUpdateProgress) => void): Promise<UnlistenFn> =>
+    listen<T.AppUpdateProgress>("app-update-progress", (e) => cb(e.payload)),
   onSessionAuto: (cb: (e: T.AutoEvent) => void): Promise<UnlistenFn> =>
     listen<T.AutoEvent>("session-auto", (e) => cb(e.payload)),
   /** Le créneau actif a changé tout seul (le précédent est terminé, un autre est en cours). */

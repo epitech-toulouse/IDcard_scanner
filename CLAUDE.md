@@ -22,7 +22,8 @@ BADGEUSE_READER=mock npm run tauri dev        # lecteur simulé : champ « Badge
 cargo test -p badgeuse-core                   # tests métier (pas besoin de webkit ni pcsclite)
 npm run check                                 # svelte-check (types TS + Svelte)
 npm test                                      # vitest (src/**/*.test.ts)
-npm run tauri build                           # .deb + AppImage dans target/release/bundle/
+TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/badgeuse-updater.key)" TAURI_SIGNING_PRIVATE_KEY_PASSWORD= \
+  npm run tauri build                         # .deb + AppImage (+ .sig de mise à jour) dans target/release/bundle/
 python3 tools/acr122u_test.py 30              # diagnostic du lecteur en USB direct (sans pcscd)
 python3 tools/carte_tool.py                   # testeur PC/SC : lecteur + UID/ATR + contenu de la carte
 python3 tools/carte_tool.py read 4            # lit un bloc/une page
@@ -44,6 +45,9 @@ Le pilote noyau `pn533_usb` capture l'ACR122U : il faut le blacklister pour PC/S
 - Version = dernier tag + type des commits depuis ce tag : `[breaking]` → majeure (mineure tant qu'on est en 0.x), `[feat]` → mineure,
   tout le reste → correctif. Sans tag : 0.1.0. La version n'est **jamais commitée** : la CI l'inscrit avant de compiler
   (`tools/set_version.sh`), les `0.1.0` des `Cargo.toml`/`package.json`/`tauri.conf.json` ne sont donc que des valeurs de dev.
+- Mise à jour de l'appli (plugin updater) : la CI signe `.deb` et AppImage avec le secret `TAURI_SIGNING_PRIVATE_KEY`
+  (clé publique dans `tauri.conf.json` → `plugins.updater`) et publie `latest.json` dans la release (`linux-x86_64-deb`,
+  `linux-x86_64-appimage`). Changer de clé = les appli déjà installées refusent les mises à jour suivantes.
 - Le job `app` attend `kiosk` : le `.deb` de la borne est embarqué dans l'appli (aucun téléchargement à l'exécution, le dépôt est privé).
 - Le paquet de la borne est construit sans révision Debian (`--deb-revision ""`) : le nom du fichier est celui lu par l'appli pour
   « Publier un paquet ». `kiosk.yml` et `app.yml` : tests sur `dev` et les pull requests.
@@ -74,6 +78,7 @@ crates/badgeuse-kiosk/   borne de scan (Raspberry Pi) : binaire séparé, sans T
 src-tauri/src/
   lib.rs         état (Mutex<Connection>, créneau actif), un thread par lecteur + superviseur PC/SC → événements
   commands.rs    #[tauri::command] fins qui délèguent au core
+  app_update.rs  mise à jour de l'appli : vérification au démarrage + chaque jour (événement `app-update`), installation puis redémarrage
   remote_server.rs  serveur HTTP (axum) des bornes : POST /api/scan et /api/heartbeat, jeton Bearer, → card-scanned
 src/
   lib/api.ts     wrappers typés des commandes et des événements
@@ -150,8 +155,10 @@ plus ancienne ; le jeton seul ne permet pas de pousser un paquet (il circule en 
 
 ## Données personnelles (RGPD)
 
-Tout reste en local : aucun service externe, aucune télémétrie, aucun CDN ni police distante. Le seul trafic réseau
-autorisé est celui des bornes (Raspberry Pi) vers l'appli du PC de l'enseignant, **sur le réseau local** :
+Tout reste en local : aucun service externe, aucune télémétrie, aucun CDN ni police distante. Seule exception vers Internet :
+la recherche de mise à jour de l'appli (`app_update.rs`, réglage `app_update_check`, désactivable) lit `latest.json` de la
+release GitHub et télécharge le paquet signé ; aucune donnée n'est envoyée. Le reste du trafic réseau autorisé est celui des
+bornes (Raspberry Pi) vers l'appli du PC de l'enseignant, **sur le réseau local** :
 - l'appli ne fait que répondre (désactivé par défaut) ; jeton obligatoire, jamais de borne acceptée sans jeton ;
 - HTTP en clair (pas de TLS) : le jeton circule en clair sur le LAN, ne jamais exposer le port vers Internet ;
 - la borne ne reçoit que prénom + initiale du nom (jamais numéro étudiant ni e-mail) ; sa file ne contient que UID + heure
