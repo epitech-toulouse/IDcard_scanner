@@ -30,6 +30,7 @@ python3 tools/carte_tool.py read 4            # lit un bloc/une page
 python3 tools/carte_tool.py write 6 DEADBEEF  # écrit (édite) une carte MIFARE Classic / Ultralight / NTAG
 cargo test -p badgeuse-kiosk                  # borne Raspberry Pi : file d'attente, envoi, affichage
 cargo deb -p badgeuse-kiosk                   # paquet .deb de la borne (arm64 sur un Pi / runner arm64)
+sudo apt install ./badgeuse-kiosk_X.Y.Z_arm64.deb  # sur le Pi : apt (pas dpkg -i) pour récupérer cage + chromium
 ```
 
 Prérequis système (Ubuntu/Debian) :
@@ -75,6 +76,8 @@ crates/badgeuse-kiosk/   borne de scan (Raspberry Pi) : binaire séparé, sans T
   client.rs      client HTTP (trait Transport, doublé dans les tests) ; kiosk.rs : on_card + flush (toutes les 10 s)
   display.rs web.rs static/index.html   page plein écran servie sur 127.0.0.1:8080 (interrogation de /state, aucune ressource distante)
   readers.rs     lecteurs PC/SC (un thread par lecteur) ou simulé ; dist/ : unités systemd, polkit, scripts du .deb
+                 postinst : coupe le bureau (lightdm…, cible multi-user, rétabli par postrm), active borne + affichage si le
+                 jeton est renseigné ; dist/cursor : curseur invisible (XCURSOR_THEME) ; profil Chromium dans /run/badgeuse-display
 src-tauri/src/
   lib.rs         état (Mutex<Connection>, créneau actif), un thread par lecteur + superviseur PC/SC → événements
   commands.rs    #[tauri::command] fins qui délèguent au core

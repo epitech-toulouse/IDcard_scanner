@@ -1,6 +1,18 @@
 #!/bin/sh
 set -e
 
+STATE=/var/lib/badgeuse-kiosk/install-state
+
+# Désinstallation : rend l'écran au bureau si postinst l'avait désactivé.
+if [ "$1" = "remove" ] && [ -f "$STATE" ] && [ -d /run/systemd/system ]; then
+    dm=$(sed -n 's/^display_manager=//p' "$STATE" | tail -1)
+    target=$(sed -n 's/^default_target=//p' "$STATE" | tail -1)
+    [ -n "$target" ] && systemctl set-default "$target" >/dev/null 2>&1 || true
+    [ -n "$dm" ] && systemctl enable "$dm" >/dev/null 2>&1 || true
+    rm -f "$STATE"
+    [ -n "$dm" ] && echo "badgeuse-kiosk : bureau ($dm) réactivé, il redémarrera au prochain démarrage"
+fi
+
 if [ "$1" = "purge" ]; then
     # Les badges non transmis disparaissent avec la purge.
     rm -rf /var/lib/badgeuse-kiosk

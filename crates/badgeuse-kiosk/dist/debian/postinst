@@ -1,6 +1,15 @@
 #!/bin/sh
 set -e
 
+# Mémoire de ce que le paquet a changé sur le système (rétabli par postrm à la désinstallation).
+STATE=/var/lib/badgeuse-kiosk/install-state
+CONF=/etc/badgeuse-kiosk.toml
+
+# Le jeton est renseigné : la borne peut démarrer (sinon le service échouerait en boucle).
+configured() {
+    [ -f "$CONF" ] && grep -Eq '^[[:space:]]*token[[:space:]]*=[[:space:]]*"[^"]+"' "$CONF"
+}
+
 if [ "$1" = "configure" ]; then
     # Service de lecture : utilisateur système dédié, sans shell.
     if ! getent passwd badgeuse-kiosk >/dev/null; then
@@ -9,24 +18,53 @@ if [ "$1" = "configure" ]; then
     # Affichage : accès à l'écran et aux périphériques de saisie (cage / Chromium).
     if ! getent passwd badgeuse-display >/dev/null; then
         adduser --system --group --home /var/lib/badgeuse-display --shell /usr/sbin/nologin badgeuse-display
-        for g in video render input; do
-            getent group "$g" >/dev/null && adduser badgeuse-display "$g" >/dev/null || true
-        done
     fi
+    for g in video render input; do
+        getent group "$g" >/dev/null && adduser badgeuse-display "$g" >/dev/null 2>&1 || true
+    done
     # Le fichier de configuration contient le jeton : lisible par le service uniquement.
-    if [ -f /etc/badgeuse-kiosk.toml ]; then
-        chown root:badgeuse-kiosk /etc/badgeuse-kiosk.toml
-        chmod 640 /etc/badgeuse-kiosk.toml
+    if [ -f "$CONF" ]; then
+        chown root:badgeuse-kiosk "$CONF"
+        chmod 640 "$CONF"
     fi
-    systemctl daemon-reload >/dev/null 2>&1 || true
-    # Mise à jour depuis l'appli : l'unité .path surveille le dépôt du paquet (inoffensive sans clé publique).
-    systemctl enable --now badgeuse-kiosk-update.path >/dev/null 2>&1 || true
-    # Mise à jour d'une borne déjà en service : on relance la lecture avec le nouveau binaire.
-    if [ -n "$2" ] && systemctl is-active --quiet badgeuse-kiosk; then
-        systemctl restart badgeuse-kiosk >/dev/null 2>&1 || true
+    mkdir -p /var/lib/badgeuse-kiosk
+    # Ancien profil Chromium dans /tmp (versions précédentes) : il pouvait appartenir à un autre utilisateur.
+    rm -rf /tmp/badgeuse-display
+
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload >/dev/null 2>&1 || true
+
+        # L'écran appartient à la borne : le bureau (lightdm, gdm…) ne démarre plus. Appliqué au prochain
+        # démarrage, pour ne pas couper une session graphique pendant l'installation.
+        if [ -L /etc/systemd/system/display-manager.service ]; then
+            dm=$(basename "$(readlink -f /etc/systemd/system/display-manager.service)" .service)
+            if [ -n "$dm" ] && [ "$dm" != "display-manager" ]; then
+                echo "display_manager=$dm" >> "$STATE"
+                systemctl disable "$dm" >/dev/null 2>&1 || true
+                echo "badgeuse-kiosk : bureau ($dm) désactivé au profit de l'affichage de la borne"
+            fi
+        fi
+        if [ "$(systemctl get-default 2>/dev/null)" = "graphical.target" ]; then
+            echo "default_target=graphical.target" >> "$STATE"
+            systemctl set-default multi-user.target >/dev/null 2>&1 || true
+        fi
+
+        # Mise à jour depuis l'appli : l'unité .path surveille le dépôt du paquet (inoffensive sans clé publique).
+        systemctl enable --now badgeuse-kiosk-update.path >/dev/null 2>&1 || true
+
+        if configured; then
+            systemctl enable badgeuse-kiosk badgeuse-display >/dev/null 2>&1 || true
+            # Première installation ou mise à jour : on (re)lance avec le nouveau binaire et les nouvelles unités.
+            systemctl restart badgeuse-kiosk >/dev/null 2>&1 || true
+            if systemctl is-active --quiet display-manager 2>/dev/null; then
+                echo "badgeuse-kiosk : redémarrez le Pi pour passer l'écran sur l'affichage de la borne (sudo reboot)"
+            else
+                systemctl restart badgeuse-display >/dev/null 2>&1 || true
+            fi
+        else
+            echo "badgeuse-kiosk : renseignez $CONF (server_url, token) puis : sudo systemctl enable --now badgeuse-kiosk badgeuse-display"
+        fi
     fi
-    # Pas de démarrage automatique : la configuration (adresse, jeton) doit d'abord être renseignée.
-    echo "badgeuse-kiosk : renseignez /etc/badgeuse-kiosk.toml puis : sudo systemctl enable --now badgeuse-kiosk badgeuse-display"
 fi
 
 exit 0
