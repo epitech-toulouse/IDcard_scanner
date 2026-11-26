@@ -290,6 +290,7 @@ pub fn run() {
             commands::update_info,
             commands::update_generate_keys,
             commands::update_publish,
+            commands::update_publish_bundled,
             commands::update_unpublish,
             commands::tree,
             commands::create_program,

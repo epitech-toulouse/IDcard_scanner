@@ -54,7 +54,8 @@ jobs:
           if-no-files-found: error
 
   app:
-    needs: version
+    # Après la borne : son .deb est embarqué dans l'appli (bouton « Mettre à jour les bornes »).
+    needs: [version, kiosk]
     # Ubuntu 22.04 : glibc plus ancienne, donc AppImage et .deb tournent aussi sur les distributions un peu anciennes.
     runs-on: ubuntu-22.04
     env:
@@ -78,8 +79,13 @@ jobs:
       - run: npm ci
       - name: Vérifications (types, tests front, cœur métier)
         run: npm run check && npm test && cargo test -p badgeuse-core
+      - name: Paquet de la borne embarqué dans l'appli
+        uses: actions/download-artifact@v4
+        with:
+          name: badgeuse-kiosk
+          path: src-tauri/resources/kiosk
       - name: Paquets .deb et AppImage
-        run: npm run tauri build
+        run: ls -l src-tauri/resources/kiosk && npm run tauri build
       - uses: actions/upload-artifact@v4
         with:
           name: badgeuse-app
@@ -109,4 +115,4 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "Badgeuse v$VERSION" \
             --generate-notes \
-            --notes "Fichiers : appli Linux (.deb, AppImage) et paquet de la borne Raspberry Pi (badgeuse-kiosk_${VERSION}_arm64.deb, à publier dans Réglages → Bornes réseau → Mise à jour pour mettre les bornes à jour)."
+            --notes "Fichiers : appli Linux (.deb, AppImage) et paquet de la borne Raspberry Pi (badgeuse-kiosk_${VERSION}_arm64.deb, déjà embarqué dans l'appli : Réglages → Mise à jour des bornes → « Mettre à jour les bornes »)."

@@ -69,6 +69,7 @@ export const api = {
   updateInfo: () => invoke<T.UpdateInfo>("update_info"),
   updateGenerateKeys: (regenerate: boolean) => invoke<T.UpdateInfo>("update_generate_keys", { regenerate }),
   updatePublish: (path: string) => invoke<T.UpdateInfo>("update_publish", { path }),
+  updatePublishBundled: () => invoke<T.UpdateInfo>("update_publish_bundled"),
   updateUnpublish: () => invoke<T.UpdateInfo>("update_unpublish"),
   localAddress: () => invoke<string | null>("local_address"),
 };

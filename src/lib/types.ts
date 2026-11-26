@@ -143,6 +143,8 @@ export interface UpdateOffer {
 export interface UpdateInfo {
   public_key: string | null;
   offer: UpdateOffer | null;
+  /** Version du paquet de borne embarqué dans l'appli (null en développement). */
+  bundled: string | null;
 }
 
 // attendance::AutoEvent (événement « session-auto »)
