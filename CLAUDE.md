@@ -49,11 +49,13 @@ crates/badgeuse-core/src/
                  (matrice + statistiques ; le CSV n'a pas les statistiques par groupe)
   nfc/           trait CardReader, run_loop (reconnexion, anti-rebond 3 s), pcsc.rs, usb.rs, mock.rs, acr122.rs,
                  diagnostic.rs (type de carte d'après ATR/SAK, pour « Test cartes »)
+  update.rs      mise à jour des bornes : SHA-256, signature Ed25519, comparaison de versions, clés/offre en base
   remote.rs      protocole borne ↔ appli (RemoteScan, RemoteReply, HeartbeatReply) et règles pures : correction
                  d'horloge, jeton (comparaison en temps constant), réponse minimale pour l'écran de la borne
 crates/badgeuse-kiosk/   borne de scan (Raspberry Pi) : binaire séparé, sans Tauri
   config.rs      /etc/badgeuse-kiosk.toml (validé : HTTP seulement, jeton obligatoire, affichage en 127.0.0.1)
   queue.rs       file SQLite des badges non transmis (écrits AVANT l'envoi, supprimés une fois traités)
+  updater.rs     mise à jour : la borne dépose un paquet vérifié ; `--apply-update` (service root) le revérifie et lance dpkg
   client.rs      client HTTP (trait Transport, doublé dans les tests) ; kiosk.rs : on_card + flush (toutes les 10 s)
   display.rs web.rs static/index.html   page plein écran servie sur 127.0.0.1:8080 (interrogation de /state, aucune ressource distante)
   readers.rs     lecteurs PC/SC (un thread par lecteur) ou simulé ; dist/ : unités systemd, polkit, scripts du .deb
@@ -87,6 +89,14 @@ Flux d'un badge de **borne** (réglage `remote_enabled`, désactivé par défaut
 4. Hors ligne, la borne garde le badge et le renvoie dans l'ordre (toutes les 10 s) avec son heure d'origine.
    En mode « Test cartes », un badge rejoué (`RemoteScan::is_replay`) est refusé en 503 pour que la borne le garde.
    Une borne apparaît dans `ReadersStatus` (`backend: "remote"`, nom `borne:<device>`), hors ligne après 30 s sans signal.
+
+**Mise à jour des bornes** (Réglages → Bornes réseau → Mise à jour) : l'enseignant publie un `badgeuse-kiosk_<version>_arm64.deb` ;
+l'appli le range dans `<données>/kiosk-update/`, le signe (Ed25519, clé privée en base, jamais envoyée) et l'annonce dans la réponse au
+signal de vie (`HeartbeatReply.update`) ; la borne le télécharge (`GET /api/update/package`, jeton) si elle est au repos (file vide,
+aucun badge depuis 60 s), contrôle signature + empreinte avec `update_public_key` (config de la borne, vide = désactivé) et le dépose
+dans `/var/lib/badgeuse-kiosk/update/`. `badgeuse-kiosk-update.path` déclenche alors `badgeuse-kiosk-update.service` (root) :
+`--apply-update` revérifie tout, copie dans `/run/badgeuse-kiosk-update` (0700) puis `dpkg -i --force-confold`. Jamais de version
+plus ancienne ; le jeton seul ne permet pas de pousser un paquet (il circule en clair sur le LAN).
 
 ## Vocabulaire et règles métier
 

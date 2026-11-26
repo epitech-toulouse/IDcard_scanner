@@ -131,6 +131,20 @@ export interface Settings {
   remote_token: string;
 }
 
+// update::UpdateOffer (mise à jour de borne publiée)
+export interface UpdateOffer {
+  version: string;
+  sha256: string;
+  size: number;
+  signature: string;
+}
+
+// commands::UpdateInfo
+export interface UpdateInfo {
+  public_key: string | null;
+  offer: UpdateOffer | null;
+}
+
 // attendance::AutoEvent (événement « session-auto »)
 export interface AutoEvent {
   session_id: Id;

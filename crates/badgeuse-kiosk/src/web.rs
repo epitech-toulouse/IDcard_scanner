@@ -81,6 +81,9 @@ mod tests {
         fn heartbeat(&self, _: u32) -> Result<HeartbeatReply, SendError> {
             Err(SendError::Retry("hors ligne".into()))
         }
+        fn fetch_package(&self, _: u64) -> Result<Vec<u8>, SendError> {
+            Err(SendError::Retry("hors ligne".into()))
+        }
     }
 
     fn start(mock: Option<MockHandle>) -> (String, Arc<Kiosk>) {

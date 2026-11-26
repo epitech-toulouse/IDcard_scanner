@@ -66,6 +66,10 @@ export const api = {
   backupDb: (path: string) => invoke<void>("backup_db", { path }),
   restoreDb: (path: string) => invoke<void>("restore_db", { path }),
   dataPath: () => invoke<string>("data_path"),
+  updateInfo: () => invoke<T.UpdateInfo>("update_info"),
+  updateGenerateKeys: (regenerate: boolean) => invoke<T.UpdateInfo>("update_generate_keys", { regenerate }),
+  updatePublish: (path: string) => invoke<T.UpdateInfo>("update_publish", { path }),
+  updateUnpublish: () => invoke<T.UpdateInfo>("update_unpublish"),
   localAddress: () => invoke<string | null>("local_address"),
 };
 

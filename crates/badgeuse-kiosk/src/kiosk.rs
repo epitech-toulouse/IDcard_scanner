@@ -6,9 +6,17 @@ use crate::client::{SendError, Transport};
 use crate::display::{Display, Network, Shown};
 use crate::queue::{Pending, Queue};
 use badgeuse_core::nfc::{CardInfo, Feedback};
+use crate::updater::{self, UpdateConfig};
 use badgeuse_core::remote::{RemoteReply, RemoteScan};
+use badgeuse_core::update::{self, UpdateOffer};
 use chrono::NaiveDateTime;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
+
+/// La borne ne se met à jour que si personne n'a badgé depuis ce délai (jamais en plein appel).
+const UPDATE_IDLE_FOR: Duration = Duration::from_secs(60);
+/// Après un échec de téléchargement ou de vérification, on ne réessaie pas la même version avant ce délai.
+const UPDATE_RETRY_AFTER: Duration = Duration::from_secs(600);
 
 /// Badges renvoyés par lot lors du vidage de la file.
 const BATCH: u32 = 50;
@@ -21,6 +29,10 @@ pub struct Kiosk {
     transport: Arc<dyn Transport>,
     pub display: Display,
     clock: Box<dyn Fn() -> NaiveDateTime + Send + Sync>,
+    updates: Option<UpdateConfig>,
+    last_card: Mutex<Option<Instant>>,
+    /// Dernière version dont la préparation a échoué, et quand.
+    update_failed: Mutex<Option<(String, Instant)>>,
 }
 
 /// Sort d'un badge après une tentative d'envoi.
@@ -40,7 +52,22 @@ impl Kiosk {
         transport: Arc<dyn Transport>,
         clock: Box<dyn Fn() -> NaiveDateTime + Send + Sync>,
     ) -> Kiosk {
-        Kiosk { device, queue: Mutex::new(queue), transport, display: Display::new(), clock }
+        Kiosk {
+            device,
+            queue: Mutex::new(queue),
+            transport,
+            display: Display::new(),
+            clock,
+            updates: None,
+            last_card: Mutex::new(None),
+            update_failed: Mutex::new(None),
+        }
+    }
+
+    /// Active la mise à jour depuis l'appli (clé publique configurée).
+    pub fn with_updates(mut self, cfg: UpdateConfig) -> Kiosk {
+        self.updates = Some(cfg);
+        self
     }
 
     fn queue(&self) -> MutexGuard<'_, Queue> {
@@ -58,6 +85,7 @@ impl Kiosk {
     pub fn on_card(&self, card: &CardInfo) -> Feedback {
         let uid = card.uid_hex();
         tracing::info!("carte {uid}");
+        *self.last_card.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
         if card.is_random_uid() {
             self.display.show(Shown::random_uid());
             return Feedback::Error;
@@ -131,6 +159,46 @@ impl Kiosk {
         }
     }
 
+    /// Télécharge et dépose la mise à jour proposée par l'appli si elle est signée, plus récente et si la
+    /// borne est au repos. L'installation elle-même est faite par le service root (voir `updater`).
+    fn prepare_update(&self, offer: &UpdateOffer) {
+        let Some(cfg) = &self.updates else { return };
+        match updater::wanted(&cfg.public_key, offer, updater::CURRENT) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(e) => return self.update_failed(offer, &format!("offre refusée : {e}")),
+        }
+        if updater::is_staged(&cfg.dir) {
+            return;
+        }
+        if let Some((v, at)) = &*self.update_failed.lock().unwrap_or_else(|e| e.into_inner())
+            && *v == offer.version
+            && at.elapsed() < UPDATE_RETRY_AFTER
+        {
+            return;
+        }
+        let idle = self.last_card.lock().unwrap_or_else(|e| e.into_inner()).is_none_or(|t| t.elapsed() >= UPDATE_IDLE_FOR);
+        if !idle || self.queue().len().unwrap_or(1) > 0 {
+            return;
+        }
+        tracing::info!("mise à jour {} → {} : téléchargement", updater::CURRENT, offer.version);
+        let staged = self
+            .transport
+            .fetch_package(offer.size)
+            .map_err(|e| format!("téléchargement : {e:?}"))
+            .and_then(|data| update::verify_package(offer, &data).map(|()| data).map_err(|e| e.to_string()))
+            .and_then(|data| updater::stage(&cfg.dir, offer, &data).map_err(|e| format!("{} : {e}", cfg.dir.display())));
+        match staged {
+            Ok(()) => tracing::info!("mise à jour {} prête : installation par le service root", offer.version),
+            Err(e) => self.update_failed(offer, &e),
+        }
+    }
+
+    fn update_failed(&self, offer: &UpdateOffer, why: &str) {
+        tracing::warn!("mise à jour {} non préparée : {why}", offer.version);
+        *self.update_failed.lock().unwrap_or_else(|e| e.into_inner()) = Some((offer.version.clone(), Instant::now()));
+    }
+
     /// Signal de vie, puis renvoi dans l'ordre des badges en attente. S'arrête au premier échec
     /// réseau : les suivants restent en file et repartent au prochain passage.
     pub fn flush(&self) {
@@ -140,6 +208,9 @@ impl Kiosk {
             Ok(hb) => {
                 self.display.set_network(Network::Ok);
                 self.display.set_session(hb.session_title);
+                if let Some(offer) = hb.update {
+                    self.prepare_update(&offer);
+                }
             }
             Err(SendError::Retry(why)) => {
                 tracing::debug!("appli injoignable : {why}");
@@ -190,6 +261,8 @@ mod tests {
         token_ok: AtomicBool,
         budget: AtomicI32,
         received: Mutex<Vec<RemoteScan>>,
+        offer: Mutex<Option<UpdateOffer>>,
+        package: Mutex<Option<Vec<u8>>>,
     }
 
     impl Transport for FakeApp {
@@ -214,6 +287,10 @@ mod tests {
             })
         }
 
+        fn fetch_package(&self, _max: u64) -> Result<Vec<u8>, SendError> {
+            self.package.lock().unwrap().clone().ok_or(SendError::Retry("pas de paquet".into()))
+        }
+
         fn heartbeat(&self, _pending: u32) -> Result<HeartbeatReply, SendError> {
             if !self.online.load(Ordering::SeqCst) {
                 return Err(SendError::Retry("réseau coupé".into()));
@@ -221,7 +298,7 @@ mod tests {
             if !self.token_ok.load(Ordering::SeqCst) {
                 return Err(SendError::Unauthorized);
             }
-            Ok(HeartbeatReply { session_title: Some("Réseaux".into()) })
+            Ok(HeartbeatReply { session_title: Some("Réseaux".into()), update: self.offer.lock().unwrap().clone() })
         }
     }
 
@@ -237,6 +314,8 @@ mod tests {
             token_ok: AtomicBool::new(true),
             budget: AtomicI32::new(i32::MAX),
             received: Mutex::new(vec![]),
+            offer: Mutex::new(None),
+            package: Mutex::new(None),
         });
         let now = Arc::new(Mutex::new(dt("2026-11-17 08:00:00")));
         let clock = now.clone();
@@ -347,5 +426,76 @@ mod tests {
         assert_eq!(pending(&r.kiosk), 0);
         assert!(r.app.received.lock().unwrap().is_empty());
         assert_eq!(state(&r.kiosk)["last"]["kind"].as_str(), Some("random_uid"));
+    }
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("badgeuse-kiosk-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+
+    /// Borne avec mise à jour activée ; l'appli propose `version` signée par la bonne clé.
+    fn update_rig(name: &str, version: &str, data: &[u8]) -> (Rig, std::path::PathBuf) {
+        let (secret, public) = update::generate_keypair().unwrap();
+        let dir = temp_dir(name);
+        let mut r = rig(true);
+        r.kiosk = Kiosk::new("borne1".into(), Queue::open_in_memory(), r.app.clone(), Box::new(|| dt("2026-11-17 08:00:00")))
+            .with_updates(UpdateConfig { public_key: public, dir: dir.clone() });
+        *r.app.offer.lock().unwrap() = Some(update::make_offer(&secret, version, data).unwrap());
+        *r.app.package.lock().unwrap() = Some(data.to_vec());
+        (r, dir)
+    }
+
+    #[test]
+    fn newer_signed_update_is_downloaded_and_staged() {
+        let (r, dir) = update_rig("stage", "99.0.0", b"paquet");
+        r.kiosk.flush();
+        assert!(updater::is_staged(&dir));
+        assert_eq!(std::fs::read(dir.join(updater::PENDING_DEB)).unwrap(), b"paquet");
+    }
+
+    #[test]
+    fn update_not_staged_when_old_corrupt_busy_or_disabled() {
+        // Version pas plus récente que la borne.
+        let (r, dir) = update_rig("old", "0.0.1", b"paquet");
+        r.kiosk.flush();
+        assert!(!updater::is_staged(&dir));
+
+        // Paquet servi différent de celui qui est signé.
+        let (r, dir) = update_rig("corrupt", "99.0.0", b"paquet");
+        *r.app.package.lock().unwrap() = Some(b"autre chose".to_vec());
+        r.kiosk.flush();
+        assert!(!updater::is_staged(&dir));
+
+        // Quelqu'un vient de badger : on attend.
+        let (r, dir) = update_rig("busy", "99.0.0", b"paquet");
+        r.kiosk.on_card(&card(1));
+        r.kiosk.flush();
+        assert!(!updater::is_staged(&dir));
+
+        // Badge encore en file : on attend aussi.
+        let (r, dir) = update_rig("queued", "99.0.0", b"paquet");
+        r.app.online.store(false, Ordering::SeqCst);
+        *r.kiosk.last_card.lock().unwrap() = None;
+        r.kiosk.queue().push("04:A1:01", dt("2026-11-17 08:00:00")).unwrap();
+        r.app.online.store(true, Ordering::SeqCst);
+        r.app.budget.store(0, Ordering::SeqCst); // l'envoi du badge échoue : il reste en file
+        r.kiosk.flush();
+        assert!(!updater::is_staged(&dir));
+
+        // Sans clé publique configurée (cas par défaut), jamais de mise à jour.
+        let r = rig(true);
+        *r.app.offer.lock().unwrap() = Some(update::make_offer(&update::generate_keypair().unwrap().0, "99.0.0", b"x").unwrap());
+        *r.app.package.lock().unwrap() = Some(b"x".to_vec());
+        r.kiosk.flush();
+    }
+
+    #[test]
+    fn offer_signed_with_another_key_is_never_downloaded() {
+        let (r, dir) = update_rig("forged", "99.0.0", b"paquet");
+        let (other_secret, _) = update::generate_keypair().unwrap();
+        *r.app.offer.lock().unwrap() = Some(update::make_offer(&other_secret, "99.0.0", b"paquet").unwrap());
+        r.kiosk.flush();
+        assert!(!updater::is_staged(&dir));
     }
 }

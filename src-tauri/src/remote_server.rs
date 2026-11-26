@@ -7,12 +7,12 @@ use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use badgeuse_core::nfc::{self, CardInfo, ReaderStatus};
 use badgeuse_core::model::SessionState;
 use badgeuse_core::remote::{self, HeartbeatReply, RemoteHeartbeat, RemoteReply, RemoteScan};
-use badgeuse_core::{Error, attendance, db, sessions, settings};
+use badgeuse_core::{Error, attendance, db, sessions, settings, update};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -33,6 +33,7 @@ pub fn start(app: AppHandle, port: u16) {
     let router = Router::new()
         .route("/api/scan", post(scan))
         .route("/api/heartbeat", post(heartbeat))
+        .route("/api/update/package", get(update_package))
         .layer(DefaultBodyLimit::max(4096))
         .with_state(srv.clone());
 
@@ -77,15 +78,19 @@ impl Srv {
         !expected.is_empty() && remote::token_matches(&expected, given.trim())
     }
 
-    fn touch(&self, device: &str, pending: Option<u32>) {
+    fn touch(&self, device: &str, pending: Option<u32>, version: Option<&str>) {
         let first = lock(&self.seen).insert(device.to_string(), Instant::now()).is_none();
         let state = self.app.state::<AppState>();
         let known = lock(&state.readers).get(&format!("borne:{device}")).is_some_and(|r| r.connected);
         // On ne ré-émet l'état que s'il change, ou pour rafraîchir le compteur d'attente.
         if first || !known || pending.is_some() {
+            let label = match version {
+                Some(v) => format!("Borne {device} (v{v})"),
+                None => format!("Borne {device}"),
+            };
             let message = match pending {
-                Some(n) if n > 0 => format!("Borne {device} · {n} badge(s) en attente d'envoi"),
-                _ => format!("Borne {device}"),
+                Some(n) if n > 0 => format!("{label} · {n} badge(s) en attente d'envoi"),
+                _ => label,
             };
             publish_status(
                 &self.app,
@@ -135,7 +140,7 @@ async fn scan(State(srv): State<Arc<Srv>>, headers: HeaderMap, body: Bytes) -> R
         Ok(s) => s,
         Err(e) => return (StatusCode::UNPROCESSABLE_ENTITY, format!("Badge illisible : {e}")).into_response(),
     };
-    srv.touch(&scan.device, None);
+    srv.touch(&scan.device, None, None);
     let app = &srv.app;
     let state = app.state::<AppState>();
 
@@ -192,13 +197,38 @@ async fn heartbeat(State(srv): State<Arc<Srv>>, headers: HeaderMap, body: Bytes)
     }
     match serde_json::from_slice::<RemoteHeartbeat>(&body) {
         Ok(hb) if !hb.device.trim().is_empty() => {
-            srv.touch(&hb.device, Some(hb.pending));
+            // Version de la borne : texte libre venu du réseau, on ne garde que ce qui ressemble à un numéro.
+            let version = hb.version.as_deref().filter(|v| update::valid_version(v));
+            srv.touch(&hb.device, Some(hb.pending), version);
             let state = srv.app.state::<AppState>();
             let session_title = state.active().and_then(|id| {
                 sessions::get(&state.db(), id).ok().filter(|s| s.state == SessionState::Open).map(|s| s.title)
             });
-            Json(HeartbeatReply { session_title }).into_response()
+            let update = update::published(&state.db()).ok().flatten();
+            Json(HeartbeatReply { session_title, update }).into_response()
         }
         _ => (StatusCode::UNPROCESSABLE_ENTITY, "Signal de vie illisible").into_response(),
+    }
+}
+
+/// Sert le paquet de mise à jour publié. La borne en vérifie elle-même la signature : ce point d'accès
+/// n'est qu'un transport (jeton obligatoire comme pour le reste).
+async fn update_package(State(srv): State<Arc<Srv>>, headers: HeaderMap) -> Response {
+    if !srv.authorized(&headers) {
+        return (StatusCode::UNAUTHORIZED, "Jeton invalide").into_response();
+    }
+    let app = srv.app.clone();
+    let read = tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let offer = update::published(&state.db()).ok().flatten()?;
+        let data = std::fs::read(crate::commands::update_package_path(&state)).ok()?;
+        update::verify_package(&offer, &data).ok().map(|()| data)
+    })
+    .await
+    .ok()
+    .flatten();
+    match read {
+        Some(data) => ([(header::CONTENT_TYPE, "application/octet-stream")], data).into_response(),
+        None => (StatusCode::NOT_FOUND, "Aucune mise à jour publiée").into_response(),
     }
 }

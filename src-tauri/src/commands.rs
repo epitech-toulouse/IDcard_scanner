@@ -9,6 +9,7 @@ use badgeuse_core::import::{self, ColumnMapping, ImportReport, Preview};
 use badgeuse_core::model::*;
 use badgeuse_core::nfc::{self, ReadersStatus};
 use badgeuse_core::settings::{self, Settings};
+use badgeuse_core::update::{self, UpdateOffer};
 use badgeuse_core::{Error, Result, db, sessions, students};
 use chrono::NaiveDateTime;
 use std::path::PathBuf;
@@ -288,4 +289,78 @@ pub fn local_address() -> Option<String> {
 #[tauri::command]
 pub fn data_path(state: S) -> String {
     state.db_path.display().to_string()
+}
+
+// ---------- Mise à jour des bornes ----------
+
+/// Où l'appli range le paquet de borne qu'elle distribue (à côté de la base).
+pub fn update_package_path(state: &AppState) -> PathBuf {
+    state.db_path.parent().map(PathBuf::from).unwrap_or_default().join("kiosk-update").join("badgeuse-kiosk.deb")
+}
+
+#[derive(serde::Serialize)]
+pub struct UpdateInfo {
+    /// Clé publique à copier dans `update_public_key` de la configuration des bornes.
+    pub public_key: Option<String>,
+    /// Mise à jour actuellement proposée aux bornes.
+    pub offer: Option<UpdateOffer>,
+}
+
+fn update_info_of(state: &AppState) -> Result<UpdateInfo> {
+    let c = state.db();
+    Ok(UpdateInfo { public_key: update::public_key(&c)?, offer: update::published(&c)? })
+}
+
+#[tauri::command]
+pub fn update_info(state: S) -> Result<UpdateInfo> {
+    update_info_of(&state)
+}
+
+/// Crée la paire de clés de signature. `regenerate` : en refait une (les bornes devront recevoir la nouvelle
+/// clé publique, et la mise à jour publiée est retirée).
+#[tauri::command]
+pub fn update_generate_keys(state: S, regenerate: bool) -> Result<UpdateInfo> {
+    {
+        let c = state.db();
+        update::ensure_keys(&c, regenerate)?;
+        if regenerate {
+            let _ = std::fs::remove_file(update_package_path(&state));
+        }
+    }
+    update_info_of(&state)
+}
+
+/// Publie un paquet `badgeuse-kiosk_<version>_arm64.deb` : l'appli le signe et le propose aux bornes.
+#[tauri::command]
+pub fn update_publish(state: S, path: PathBuf) -> Result<UpdateInfo> {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    let version = update::version_from_deb_name(name)
+        .ok_or_else(|| Error::Invalid("Nom de fichier attendu : badgeuse-kiosk_<version>_arm64.deb".into()))?;
+    let size = std::fs::metadata(&path).map_err(|e| Error::Invalid(format!("{} : {e}", path.display())))?.len();
+    if size == 0 || size > update::MAX_PACKAGE_BYTES {
+        return Err(Error::Invalid("Paquet vide ou trop volumineux".into()));
+    }
+    let data = std::fs::read(&path).map_err(|e| Error::Invalid(format!("{} : {e}", path.display())))?;
+    // Le fichier `.deb` commence par la signature d'archive « ar » : évite de distribuer un fichier quelconque.
+    if !data.starts_with(b"!<arch>\n") {
+        return Err(Error::Invalid("Ce fichier n'est pas un paquet .deb".into()));
+    }
+    let dest = update_package_path(&state);
+    let dir = dest.parent().unwrap_or(std::path::Path::new("."));
+    std::fs::create_dir_all(dir).map_err(|e| Error::Invalid(format!("{} : {e}", dir.display())))?;
+    let tmp = dest.with_extension("deb.tmp");
+    std::fs::write(&tmp, &data).and_then(|()| std::fs::rename(&tmp, &dest)).map_err(|e| Error::Invalid(format!("{} : {e}", dest.display())))?;
+    if let Err(e) = update::publish(&state.db(), &version, &data) {
+        let _ = std::fs::remove_file(&dest);
+        return Err(e);
+    }
+    update_info_of(&state)
+}
+
+/// Retire la mise à jour proposée : les bornes ne la téléchargent plus.
+#[tauri::command]
+pub fn update_unpublish(state: S) -> Result<UpdateInfo> {
+    update::unpublish(&state.db())?;
+    let _ = std::fs::remove_file(update_package_path(&state));
+    update_info_of(&state)
 }

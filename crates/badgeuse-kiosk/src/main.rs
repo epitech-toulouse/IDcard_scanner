@@ -8,6 +8,7 @@ mod display;
 mod kiosk;
 mod queue;
 mod readers;
+mod updater;
 mod web;
 
 use client::HttpClient;
@@ -36,6 +37,21 @@ fn fail(msg: String) -> ! {
     std::process::exit(2)
 }
 
+/// Étage root de la mise à jour : `badgeuse-kiosk --apply-update` (lancé par `badgeuse-kiosk-update.service`).
+fn apply_update(cfg: &Config) -> ! {
+    if cfg.update_public_key.is_empty() {
+        fail("update_public_key absente de la configuration : mise à jour refusée".into());
+    }
+    let private = std::path::Path::new("/run/badgeuse-kiosk-update");
+    match updater::apply(&cfg.update_public_key, &cfg.update_dir, private, updater::CURRENT, updater::dpkg_install) {
+        Ok(v) => {
+            tracing::info!("borne mise à jour en version {v}");
+            std::process::exit(0)
+        }
+        Err(e) => fail(format!("mise à jour abandonnée : {e}")),
+    }
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
@@ -43,16 +59,18 @@ fn main() {
 
     let path = config_path();
     let cfg = Config::load(&path).unwrap_or_else(|e| fail(e));
+    if std::env::args().any(|a| a == "--apply-update") {
+        apply_update(&cfg);
+    }
     let queue = Queue::open(&cfg.queue_path).unwrap_or_else(|e| fail(e));
     let server = web::bind(&cfg.listen).unwrap_or_else(|e| fail(e));
     tracing::info!("borne « {} » → {} · affichage sur http://{}", cfg.device, cfg.server_url, cfg.listen);
 
-    let kiosk = Arc::new(Kiosk::new(
-        cfg.device.clone(),
-        queue,
-        Arc::new(HttpClient::new(&cfg)),
-        Box::new(badgeuse_core::db::now),
-    ));
+    let mut kiosk = Kiosk::new(cfg.device.clone(), queue, Arc::new(HttpClient::new(&cfg)), Box::new(badgeuse_core::db::now));
+    if !cfg.update_public_key.is_empty() {
+        kiosk = kiosk.with_updates(updater::UpdateConfig { public_key: cfg.update_public_key.clone(), dir: cfg.update_dir.clone() });
+    }
+    let kiosk = Arc::new(kiosk);
     let mock = readers::start(kiosk.clone(), &cfg);
     web::spawn(server, kiosk.clone(), mock);
 
