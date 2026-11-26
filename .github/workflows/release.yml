@@ -1,0 +1,112 @@
+name: Release
+
+# À chaque push sur main : calcule la version, compile le paquet de la borne (arm64) et l'appli (.deb + AppImage),
+# crée le tag vX.Y.Z et la release GitHub avec les fichiers.
+# Mettre « [skip release] » dans le message du commit pour ne rien publier.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+# Une release à la fois : deux push rapprochés ne se disputent pas le même numéro.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # l'historique et les tags servent à calculer la version
+      - id: v
+        run: echo "version=$(tools/next_version.sh)" >> "$GITHUB_OUTPUT"
+
+  kiosk:
+    needs: version
+    # Runner arm64 : le .deb est directement installable sur un Raspberry Pi 4/5 (64 bits).
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dépendances système
+        run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev pkg-config
+      - name: Rust stable
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Version ${{ needs.version.outputs.version }}
+        run: tools/set_version.sh "${{ needs.version.outputs.version }}"
+      - name: Tests (cœur métier et borne)
+        run: cargo test -p badgeuse-core -p badgeuse-kiosk
+      - name: Paquet .deb
+        # Sans révision Debian (« -1 ») : le nom du fichier porte exactement la version du binaire, que la
+        # mise à jour depuis l'appli compare à celle de la borne.
+        run: cargo install cargo-deb --locked && cargo deb -p badgeuse-kiosk --deb-revision ""
+      - uses: actions/upload-artifact@v4
+        with:
+          name: badgeuse-kiosk
+          path: target/debian/badgeuse-kiosk_*_arm64.deb
+          if-no-files-found: error
+
+  app:
+    needs: version
+    # Ubuntu 22.04 : glibc plus ancienne, donc AppImage et .deb tournent aussi sur les distributions un peu anciennes.
+    runs-on: ubuntu-22.04
+    env:
+      APPIMAGE_EXTRACT_AND_RUN: "1" # pas de FUSE sur le runner
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dépendances système
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libpcsclite-dev libudev-dev libssl-dev libxdo-dev \
+            libayatana-appindicator3-dev librsvg2-dev build-essential file pkg-config
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Rust stable
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Version ${{ needs.version.outputs.version }}
+        run: tools/set_version.sh "${{ needs.version.outputs.version }}"
+      - run: npm ci
+      - name: Vérifications (types, tests front, cœur métier)
+        run: npm run check && npm test && cargo test -p badgeuse-core
+      - name: Paquets .deb et AppImage
+        run: npm run tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: badgeuse-app
+          path: |
+            target/release/bundle/deb/*.deb
+            target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
+  release:
+    needs: [version, kiosk, app]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Tag et release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          ls -l dist
+          gh release create "v$VERSION" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "Badgeuse v$VERSION" \
+            --generate-notes \
+            --notes "Fichiers : appli Linux (.deb, AppImage) et paquet de la borne Raspberry Pi (badgeuse-kiosk_${VERSION}_arm64.deb, à publier dans Réglages → Bornes réseau → Mise à jour pour mettre les bornes à jour)."

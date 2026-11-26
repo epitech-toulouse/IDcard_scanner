@@ -32,7 +32,10 @@ pub fn wanted(public_key: &str, offer: &UpdateOffer, current: &str) -> Result<bo
     if offer.size == 0 || offer.size > update::MAX_PACKAGE_BYTES {
         return Err(format!("taille de paquet refusée : {} octets", offer.size));
     }
-    Ok(update::is_newer(&offer.version, current))
+    // La révision Debian (`-1`) n'existe pas dans la version du binaire : sans la retirer, une borne déjà à jour
+    // verrait `0.2.0-1` comme plus récente que `0.2.0` et se réinstallerait en boucle.
+    let main = |v: &str| v.split_once('-').map_or(v.to_string(), |(a, _)| a.to_string());
+    Ok(update::is_newer(&main(&offer.version), &main(current)))
 }
 
 /// Une mise à jour est déjà déposée, en attente d'installation.
@@ -132,6 +135,9 @@ mod tests {
         assert_eq!(wanted(&public, &offer, "0.1.0"), Ok(true));
         assert_eq!(wanted(&public, &offer, "0.2.0"), Ok(false));
         assert_eq!(wanted(&public, &offer, "0.3.0"), Ok(false), "jamais de retour en arrière");
+        let revised = update::make_offer(&secret, "0.2.0-1", b"deb").unwrap();
+        assert_eq!(wanted(&public, &revised, "0.2.0"), Ok(false), "pas de réinstallation en boucle");
+        assert_eq!(wanted(&public, &revised, "0.1.0"), Ok(true));
         let (_, other) = update::generate_keypair().unwrap();
         assert!(wanted(&other, &offer, "0.1.0").is_err(), "clé inconnue");
         let forged = UpdateOffer { version: "9.0.0".into(), ..offer };

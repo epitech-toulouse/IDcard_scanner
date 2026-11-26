@@ -2,7 +2,7 @@ name: Borne
 
 on:
   push:
-    branches: [main, dev]
+    branches: [dev] # sur main, la release (release.yml) compile et teste déjà la borne
     paths: ["crates/**", "Cargo.toml", "Cargo.lock", ".github/workflows/kiosk.yml"]
   pull_request:
     paths: ["crates/**", "Cargo.toml", "Cargo.lock", ".github/workflows/kiosk.yml"]

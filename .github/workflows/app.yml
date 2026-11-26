@@ -1,0 +1,28 @@
+name: Appli
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dépendances système
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libpcsclite-dev libudev-dev libssl-dev libxdo-dev \
+            libayatana-appindicator3-dev librsvg2-dev build-essential file pkg-config
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Rust stable
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci
+      - run: npm run check && npm test
+      - name: Tests Rust et compilation de l'appli
+        run: cargo test -p badgeuse-core && cargo check -p badgeuse
