@@ -33,6 +33,9 @@ pub struct HttpClient {
 impl HttpClient {
     pub fn new(cfg: &Config) -> HttpClient {
         let agent: ureq::Agent = ureq::Agent::config_builder()
+            // Connexion courte : sur le réseau local, un PC éteint ne doit pas bloquer le retour au badge
+            // pendant 3 s (le badge reste en file de toute façon).
+            .timeout_connect(Some(Duration::from_secs(1)))
             .timeout_global(Some(Duration::from_secs(3)))
             .http_status_as_error(false)
             .build()

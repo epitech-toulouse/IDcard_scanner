@@ -35,6 +35,12 @@ impl Queue {
     }
 
     fn init(conn: Connection) -> Result<Queue> {
+        // WAL + synchronous=FULL : un badge validé survit à une coupure de courant, avec un seul fsync
+        // par écriture (au lieu de plusieurs en mode journal classique) : plus rapide et moins d'usure
+        // de la carte SD. Sans effet sur une base en mémoire (tests).
+        conn.busy_timeout(std::time::Duration::from_secs(2))?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "FULL")?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS pending (
                  seq        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,23 +63,23 @@ impl Queue {
     }
 
     pub fn push(&self, uid: &str, scanned_at: NaiveDateTime) -> Result<Pending> {
-        self.conn.execute("INSERT INTO pending(uid, scanned_at) VALUES (?1, ?2)", params![uid, scanned_at])?;
+        self.conn.prepare_cached("INSERT INTO pending(uid, scanned_at) VALUES (?1, ?2)")?.execute(params![uid, scanned_at])?;
         Ok(Pending { seq: self.conn.last_insert_rowid(), uid: uid.into(), scanned_at })
     }
 
     /// Les `limit` badges les plus anciens, dans l'ordre d'arrivée.
     pub fn oldest(&self, limit: u32) -> Result<Vec<Pending>> {
-        let mut st = self.conn.prepare("SELECT seq, uid, scanned_at FROM pending ORDER BY seq LIMIT ?1")?;
+        let mut st = self.conn.prepare_cached("SELECT seq, uid, scanned_at FROM pending ORDER BY seq LIMIT ?1")?;
         st.query_map([limit], |r| Ok(Pending { seq: r.get(0)?, uid: r.get(1)?, scanned_at: r.get(2)? }))?.collect()
     }
 
     pub fn remove(&self, seq: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM pending WHERE seq = ?1", [seq])?;
+        self.conn.prepare_cached("DELETE FROM pending WHERE seq = ?1")?.execute([seq])?;
         Ok(())
     }
 
     pub fn len(&self) -> Result<u32> {
-        self.conn.query_row("SELECT COUNT(*) FROM pending", [], |r| r.get(0))
+        self.conn.prepare_cached("SELECT COUNT(*) FROM pending")?.query_row([], |r| r.get(0))
     }
 }
 
