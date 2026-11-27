@@ -164,7 +164,8 @@ release GitHub et télécharge le paquet signé ; aucune donnée n'est envoyée.
 bornes (Raspberry Pi) vers l'appli du PC de l'enseignant, **sur le réseau local** :
 - l'appli ne fait que répondre (désactivé par défaut) ; jeton obligatoire, jamais de borne acceptée sans jeton ;
 - HTTP en clair (pas de TLS) : le jeton circule en clair sur le LAN, ne jamais exposer le port vers Internet ;
-- la borne ne reçoit que prénom + initiale du nom (jamais numéro étudiant ni e-mail) ; sa file ne contient que UID + heure
+- la borne ne reçoit que prénom + initiale du nom (jamais numéro étudiant ni e-mail), et les totaux présents / attendus du créneau
+  ouvert (`remote::Progress`, barre « 10 / 24 présents » de l'écran d'attente) ; sa file ne contient que UID + heure
   et se vide à la transmission ; `remote_scans` (UID + heure) est purgée au bout de 30 jours.
 Les sauvegardes et les exports se font à la main par l'utilisateur. Purge de fin d'année : supprimer la promotion (cascade).
 

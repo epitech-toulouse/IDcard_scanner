@@ -58,6 +58,11 @@
   .panel { text-align: center; max-width: 90vw; }
   #idle .clock { font-size: clamp(4rem, 16vw, 12rem); font-weight: 200; letter-spacing: 0.02em; line-height: 1; }
   #idle .hint { margin-top: 1.5rem; font-size: clamp(1.4rem, 3.6vw, 3rem); color: var(--muted); }
+  #progress { margin: 3rem auto 0; width: min(46rem, 80vw); }
+  #progress .count { font-size: clamp(1.4rem, 3.6vw, 2.8rem); color: var(--muted); }
+  #progress .count strong { color: var(--fg); font-size: 1.5em; font-variant-numeric: tabular-nums; }
+  #progress .bar { margin-top: 0.8rem; height: clamp(0.8rem, 1.6vw, 1.3rem); border-radius: 999px; background: var(--idle); overflow: hidden; }
+  #progress .bar span { display: block; height: 100%; width: 0; background: var(--ok); border-radius: inherit; transition: width 0.4s ease-out; }
   #result .icon {
     width: clamp(5rem, 14vw, 10rem);
     height: clamp(5rem, 14vw, 10rem);
@@ -97,6 +102,10 @@
   <div id="idle" class="panel">
     <div class="clock" id="clock">--:--</div>
     <div class="hint">Passez votre carte étudiante sur le lecteur</div>
+    <div id="progress" hidden>
+      <div class="count"><strong id="here">0</strong> / <span id="expected">0</span> présents</div>
+      <div class="bar"><span id="bar"></span></div>
+    </div>
   </div>
   <div id="result" class="panel" hidden role="status" aria-live="assertive">
     <div class="icon" id="icon"></div>
@@ -145,8 +154,17 @@
     }
   }
 
+  function progress(p) {
+    $("progress").hidden = !p || !p.expected;
+    if (!p || !p.expected) return;
+    $("here").textContent = p.here;
+    $("expected").textContent = p.expected;
+    $("bar").style.width = `${Math.min(100, (100 * p.here) / p.expected)}%`;
+  }
+
   function render(s) {
     $("session").textContent = s.session ?? "Aucun créneau ouvert";
+    progress(s.session ? s.progress : null);
     $("reader").hidden = s.readers > 0;
     network(s);
 

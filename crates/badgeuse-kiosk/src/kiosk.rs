@@ -132,6 +132,10 @@ impl Kiosk {
                 self.display.set_network(Network::Ok);
                 if reply.session_title.is_some() {
                     self.display.set_session(reply.session_title.clone());
+                    // Ancienne appli : pas d'avancement, on garde celui du dernier signal de vie.
+                    if reply.progress.is_some() {
+                        self.display.set_progress(reply.progress);
+                    }
                 }
                 Delivery::Replied(reply)
             }
@@ -208,6 +212,7 @@ impl Kiosk {
             Ok(hb) => {
                 self.display.set_network(Network::Ok);
                 self.display.set_session(hb.session_title);
+                self.display.set_progress(hb.progress);
                 if let Some(offer) = hb.update {
                     self.prepare_update(&offer);
                 }
@@ -248,7 +253,7 @@ mod tests {
     use super::*;
     use badgeuse_core::model::Status;
     use badgeuse_core::nfc::Feedback;
-    use badgeuse_core::remote::{HeartbeatReply, ReplyKind};
+    use badgeuse_core::remote::{HeartbeatReply, Progress, ReplyKind};
     use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
     fn dt(s: &str) -> NaiveDateTime {
@@ -284,6 +289,7 @@ mod tests {
                 message: "Présence enregistrée".into(),
                 feedback: Feedback::Ok,
                 session_title: Some("Réseaux".into()),
+                progress: Some(Progress { here: 11, expected: 24 }),
             })
         }
 
@@ -298,7 +304,11 @@ mod tests {
             if !self.token_ok.load(Ordering::SeqCst) {
                 return Err(SendError::Unauthorized);
             }
-            Ok(HeartbeatReply { session_title: Some("Réseaux".into()), update: self.offer.lock().unwrap().clone() })
+            Ok(HeartbeatReply {
+                session_title: Some("Réseaux".into()),
+                update: self.offer.lock().unwrap().clone(),
+                progress: Some(Progress { here: 10, expected: 24 }),
+            })
         }
     }
 
@@ -345,6 +355,10 @@ mod tests {
         assert!(got[0].scan_id.starts_with("borne1-"));
         let s = state(&r.kiosk);
         assert_eq!((s["network"].as_str(), s["last"]["name"].as_str(), s["session"].as_str()), (Some("ok"), Some("Alice D."), Some("Réseaux")));
+        assert_eq!(s["progress"]["here"].as_u64(), Some(11));
+        // Le signal de vie remet l'avancement à jour.
+        r.kiosk.flush();
+        assert_eq!(state(&r.kiosk)["progress"]["here"].as_u64(), Some(10));
     }
 
     #[test]
