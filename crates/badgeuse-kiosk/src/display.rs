@@ -2,7 +2,7 @@
 
 use badgeuse_core::model::Status;
 use badgeuse_core::nfc::Feedback;
-use badgeuse_core::remote::{RemoteReply, ReplyKind};
+use badgeuse_core::remote::{Progress, RemoteReply, ReplyKind};
 use serde::Serialize;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -61,6 +61,7 @@ impl Shown {
             message: "Carte non utilisable (identifiant aléatoire)".into(),
             feedback: Feedback::Error,
             session_title: None,
+            progress: None,
         };
         Shown::from_reply(&r)
     }
@@ -70,6 +71,8 @@ struct Inner {
     network: Network,
     pending: u32,
     session: Option<String>,
+    /// Présents / attendus du créneau ouvert.
+    progress: Option<Progress>,
     readers: usize,
     /// (numéro d'ordre, instant, résultat) du dernier badge.
     last: Option<(u64, Instant, Shown)>,
@@ -93,6 +96,7 @@ struct StateView<'a> {
     network: Network,
     pending: u32,
     session: Option<&'a str>,
+    progress: Option<Progress>,
     readers: usize,
     last: Option<LastView<'a>>,
 }
@@ -100,7 +104,7 @@ struct StateView<'a> {
 impl Display {
     pub fn new() -> Display {
         Display {
-            inner: Mutex::new(Inner { network: Network::Unknown, pending: 0, session: None, readers: 0, last: None, seq: 0 }),
+            inner: Mutex::new(Inner { network: Network::Unknown, pending: 0, session: None, progress: None, readers: 0, last: None, seq: 0 }),
             show_for: Mutex::new(DEFAULT_SHOW_FOR),
         }
     }
@@ -133,6 +137,10 @@ impl Display {
         self.with(|i| i.session = title);
     }
 
+    pub fn set_progress(&self, p: Option<Progress>) {
+        self.with(|i| i.progress = p);
+    }
+
     pub fn set_readers(&self, n: usize) {
         self.with(|i| i.readers = n);
     }
@@ -142,7 +150,7 @@ impl Display {
         let show_for = *self.show_for.lock().unwrap_or_else(|e| e.into_inner());
         self.with(|i| {
             let last = i.last.as_ref().filter(|(_, at, _)| at.elapsed() < show_for).map(|(seq, _, s)| LastView { seq: *seq, shown: s });
-            let view = StateView { network: i.network, pending: i.pending, session: i.session.as_deref(), readers: i.readers, last };
+            let view = StateView { network: i.network, pending: i.pending, session: i.session.as_deref(), progress: i.progress, readers: i.readers, last };
             serde_json::to_string(&view).expect("état sérialisable")
         })
     }
@@ -164,6 +172,10 @@ mod tests {
         d.set_session(Some("Réseaux".into()));
         let v: serde_json::Value = serde_json::from_str(&d.state_json()).unwrap();
         assert_eq!((v["network"].as_str(), v["pending"].as_u64(), v["session"].as_str()), (Some("offline"), Some(3), Some("Réseaux")));
+        assert!(v["progress"].is_null());
+        d.set_progress(Some(Progress { here: 10, expected: 24 }));
+        let v: serde_json::Value = serde_json::from_str(&d.state_json()).unwrap();
+        assert_eq!((v["progress"]["here"].as_u64(), v["progress"]["expected"].as_u64()), (Some(10), Some(24)));
         assert_eq!((v["last"]["kind"].as_str(), v["last"]["feedback"].as_str(), v["last"]["seq"].as_u64()), (Some("queued"), Some("warn"), Some(1)));
 
         // Chaque badge a son numéro : la page s'en sert pour relancer l'animation.

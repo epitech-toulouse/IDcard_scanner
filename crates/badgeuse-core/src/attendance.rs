@@ -149,6 +149,7 @@ pub fn record_remote_scan(c: &Connection, active: Option<Id>, scan: &RemoteScan,
     let at = remote::correct_clock(scan.scanned_at, scan.device_now, now);
 
     let mut session_title = None;
+    let mut session_id = None;
     let outcome = if card.is_random_uid() {
         ScanOutcome::RandomUid { uid: uid.clone() }
     } else {
@@ -158,6 +159,7 @@ pub fn record_remote_scan(c: &Connection, active: Option<Id>, scan: &RemoteScan,
         match domain::pick_remote_session(active, &candidates) {
             Some(sid) => {
                 session_title = Some(sessions::get(c, sid)?.title);
+                session_id = Some(sid);
                 record_scan_inner(c, sid, &uid, at, true)?
             }
             None => identify(c, &uid)?,
@@ -166,6 +168,9 @@ pub fn record_remote_scan(c: &Connection, active: Option<Id>, scan: &RemoteScan,
 
     let mut reply = RemoteReply::from_outcome(&outcome);
     reply.session_title = session_title;
+    if let Some(sid) = session_id {
+        reply.progress = Some(remote::Progress::from_counts(&sessions::row(c, sid)?.counts));
+    }
     c.execute("DELETE FROM remote_scans WHERE received_at < ?1", [remote::purge_before(now)])?;
     c.execute(
         "INSERT INTO remote_scans(scan_id, device, uid, scanned_at, received_at, reply_json)
@@ -397,6 +402,8 @@ pub(crate) mod tests {
         let r = record_remote_scan(&c, Some(sid), &s, now).unwrap();
         assert!(matches!(r.outcome, Some(ScanOutcome::Recorded { status: Status::Present, .. })));
         assert_eq!((r.reply.kind, r.reply.display_name.as_deref()), (ReplyKind::Recorded, Some("Alice D.")));
+        let expected = sessions::row(&c, sid).unwrap().counts.expected as u32;
+        assert_eq!(r.reply.progress, Some(remote::Progress { here: 1, expected }));
 
         // Rejeu du même scan_id : même réponse, rien de ré-émis, rien de réécrit.
         let again = record_remote_scan(&c, Some(sid), &s, dt("2026-11-17 09:00")).unwrap();

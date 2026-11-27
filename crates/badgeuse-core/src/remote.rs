@@ -3,7 +3,7 @@
 //! L'enregistrement en base est dans `attendance::record_remote_scan`.
 
 use crate::attendance::ScanOutcome;
-use crate::model::Status;
+use crate::model::{Counts, Status};
 use crate::nfc::Feedback;
 use chrono::{Duration, NaiveDateTime};
 use serde::{Deserialize, Serialize};
@@ -72,6 +72,25 @@ pub struct RemoteReply {
     /// Intitulé du créneau sur lequel le badge a été traité.
     #[serde(default)]
     pub session_title: Option<String>,
+    /// Avancement de ce créneau après le badge.
+    #[serde(default)]
+    pub progress: Option<Progress>,
+}
+
+/// Avancement de l'émargement affiché sur la borne (ex. 10 / 24) : des totaux, aucun nom.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Progress {
+    /// Présents à l'heure + en retard.
+    pub here: u32,
+    /// Étudiants attendus.
+    pub expected: u32,
+}
+
+impl Progress {
+    pub fn from_counts(c: &Counts) -> Progress {
+        let n = |v: i64| u32::try_from(v.max(0)).unwrap_or(u32::MAX);
+        Progress { here: n(c.present + c.late), expected: n(c.expected) }
+    }
 }
 
 /// Réponse au signal de vie : de quoi afficher l'état du créneau en attendant un badge.
@@ -82,6 +101,9 @@ pub struct HeartbeatReply {
     /// Mise à jour publiée dans l'appli, s'il y en a une (la borne décide si elle est plus récente).
     #[serde(default)]
     pub update: Option<crate::update::UpdateOffer>,
+    /// Avancement du créneau ouvert (présents / attendus).
+    #[serde(default)]
+    pub progress: Option<Progress>,
 }
 
 /// Résultat du traitement d'un badge distant. `outcome` vaut `None` pour un rejeu déjà traité
@@ -109,6 +131,7 @@ impl RemoteReply {
             message: message.into(),
             feedback,
             session_title: None,
+            progress: None,
         };
         match o {
             ScanOutcome::Recorded { student, status, .. } => reply(

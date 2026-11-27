@@ -201,11 +201,13 @@ async fn heartbeat(State(srv): State<Arc<Srv>>, headers: HeaderMap, body: Bytes)
             let version = hb.version.as_deref().filter(|v| update::valid_version(v));
             srv.touch(&hb.device, Some(hb.pending), version);
             let state = srv.app.state::<AppState>();
-            let session_title = state.active().and_then(|id| {
-                sessions::get(&state.db(), id).ok().filter(|s| s.state == SessionState::Open).map(|s| s.title)
+            let open = state.active().and_then(|id| {
+                sessions::row(&state.db(), id).ok().filter(|r| r.session.state == SessionState::Open)
             });
+            let session_title = open.as_ref().map(|r| r.session.title.clone());
+            let progress = open.as_ref().map(|r| remote::Progress::from_counts(&r.counts));
             let update = update::published(&state.db()).ok().flatten();
-            Json(HeartbeatReply { session_title, update }).into_response()
+            Json(HeartbeatReply { session_title, update, progress }).into_response()
         }
         _ => (StatusCode::UNPROCESSABLE_ENTITY, "Signal de vie illisible").into_response(),
     }
