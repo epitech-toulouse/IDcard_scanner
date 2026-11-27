@@ -147,6 +147,31 @@ pub fn delete_session(state: S, id: Id) -> Result<()> {
     sessions::delete(&state.db(), id)
 }
 
+#[tauri::command]
+pub fn preview_session_series(starts_at: NaiveDateTime, rule: Recurrence) -> Result<SeriesPlan> {
+    sessions::preview_series(starts_at, &rule)
+}
+
+#[tauri::command]
+pub fn create_session_series(state: S, input: SessionInput, rule: Recurrence) -> Result<Vec<Session>> {
+    sessions::create_series(&state.db(), &input, &rule)
+}
+
+#[tauri::command]
+pub fn update_session_scoped(state: S, id: Id, input: SessionInput, scope: SeriesScope) -> Result<Session> {
+    sessions::update_scoped(&state.db(), id, &input, scope)
+}
+
+/// Supprime un créneau (et selon `scope` les autres prévus de sa série) ; renvoie le nombre supprimé.
+#[tauri::command]
+pub fn delete_session_scoped(state: S, id: Id, scope: SeriesScope) -> Result<usize> {
+    let ids = sessions::delete_scoped(&state.db(), id, scope)?;
+    if state.active().is_some_and(|a| ids.contains(&a)) {
+        state.set_active(None);
+    }
+    Ok(ids.len())
+}
+
 /// Ouvre le créneau et en fait le créneau actif (celui qui reçoit les badges).
 #[tauri::command]
 pub fn open_session(state: S, id: Id) -> Result<()> {

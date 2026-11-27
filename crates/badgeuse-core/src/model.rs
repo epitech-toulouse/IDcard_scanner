@@ -1,6 +1,6 @@
 //! Types partagés, sérialisés tels quels vers le front (voir `src/lib/types.ts`).
 
-use chrono::NaiveDateTime;
+use chrono::{NaiveDate, NaiveDateTime};
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use serde::{Deserialize, Serialize};
 
@@ -195,6 +195,8 @@ pub struct Session {
     pub ends_at: NaiveDateTime,
     pub late_after_min: i64,
     pub state: SessionState,
+    /// Série de créneaux répétés dont il fait partie (`None` = créneau isolé).
+    pub series_id: Option<Id>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -208,6 +210,42 @@ pub struct SessionInput {
     pub group_ids: Vec<Id>,
     #[serde(default)]
     pub cohort_ids: Vec<Id>,
+}
+
+/// Règle de répétition d'un créneau (voir `domain::recurrence_plan`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Recurrence {
+    /// Jours de la semaine, 1 = lundi … 7 = dimanche.
+    pub weekdays: Vec<u8>,
+    /// 1 = chaque semaine, 2 = une semaine sur deux…
+    pub interval_weeks: u32,
+    /// Dernière date possible (incluse).
+    pub until: Option<NaiveDate>,
+    /// Ou nombre de créneaux à créer.
+    pub count: Option<u32>,
+    /// Ne pas créer de créneau les jours fériés (France métropolitaine).
+    #[serde(default)]
+    pub skip_holidays: bool,
+}
+
+/// Dates d'une série, avant création (aperçu du formulaire).
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct SeriesPlan {
+    pub dates: Vec<NaiveDate>,
+    /// Jours fériés sautés.
+    pub skipped: Vec<NaiveDate>,
+}
+
+/// Portée d'une modification ou d'une suppression dans une série.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SeriesScope {
+    /// Ce créneau seulement (il sort de la série s'il est modifié).
+    One,
+    /// Celui-ci et les suivants encore prévus.
+    Following,
+    /// Toute la série : ce créneau et tous ceux encore prévus.
+    All,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]

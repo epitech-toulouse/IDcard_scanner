@@ -56,6 +56,8 @@ export interface Session {
   ends_at: Naive;
   late_after_min: number;
   state: SessionState;
+  /** Série de créneaux répétés (null = créneau isolé). */
+  series_id: Id | null;
 }
 export interface SessionInput {
   title: string;
@@ -66,6 +68,23 @@ export interface SessionInput {
   group_ids: Id[];
   cohort_ids: Id[];
 }
+/** Règle de répétition (miroir de `Recurrence`). Jours : 1 = lundi … 7 = dimanche. */
+export interface Recurrence {
+  weekdays: number[];
+  interval_weeks: number;
+  until: string | null;
+  count: number | null;
+  skip_holidays: boolean;
+}
+/** Dates (YYYY-MM-DD) qu'une série créerait, et jours fériés sautés. */
+export interface SeriesPlan { dates: string[]; skipped: string[] }
+export type SeriesScope = "one" | "following" | "all";
+export const SCOPE_LABEL: Record<SeriesScope, string> = {
+  one: "Ce créneau seulement",
+  following: "Celui-ci et les suivants",
+  all: "Toute la série",
+};
+
 export interface Counts { expected: number; present: number; late: number; absent: number; excused: number }
 export interface SessionRow extends Session {
   group_ids: Id[];

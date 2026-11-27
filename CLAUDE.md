@@ -58,7 +58,7 @@ Le pilote noyau `pn533_usb` capture l'ACR122U : il faut le blacklister pour PC/S
 ```
 crates/badgeuse-core/src/
   model.rs       types sérialisés vers le front (miroir : src/lib/types.ts)
-  domain.rs      règles pures : statut présent/retard, comptage, taux
+  domain.rs      règles pures : statut présent/retard, comptage, taux, dates d'une série, jours fériés
   db.rs          ouverture, migrations (PRAGMA user_version), sauvegarde/restauration
   groups.rs students.rs sessions.rs attendance.rs settings.rs   accès données par entité
   import.rs      CSV (UTF-8/Windows-1252, ; , tab) et XLSX/XLS/ODS → étudiants
@@ -85,9 +85,10 @@ src-tauri/src/
   remote_server.rs  serveur HTTP (axum) des bornes : POST /api/scan et /api/heartbeat, jeton Bearer, → card-scanned
 src/
   lib/api.ts     wrappers typés des commandes et des événements
-  lib/app.svelte.ts   route (#/page/id), statut lecteur, toasts, dialogues natifs
-  pages/         Accueil, Emargement (écran live + projection), Affichage (plein écran : créneau actif jusqu'à début + retard, puis « prochain émargement à … »), Creneaux, Etudiants, Groupes, Exports, Cartes (test), Reglages
-  components/    Modal, TargetPicker, StudentPicker, Projection, SessionForm, StudentForm, ImportWizard…
+  lib/app.svelte.ts   route (#/page/id), statut lecteur, créneau actif, toasts, dialogues natifs
+  lib/calendar.ts     placement des créneaux dans la vue semaine (pistes en cas de chevauchement)
+  pages/         Accueil (« Aujourd'hui »), Emargement (écran live + projection), Affichage (plein écran : créneau actif jusqu'à début + retard, puis « prochain émargement à … »), Creneaux (agenda semaine / liste), Etudiants, Groupes (même entrée de menu, onglets), Exports, Cartes (test), Reglages
+  components/    Icon (SVG locaux), Modal, TargetPicker, StudentPicker, Projection, SessionForm, StudentForm, ImportWizard…
 ```
 
 Flux d'un badge :
@@ -141,6 +142,11 @@ plus ancienne ; le jeton seul ne permet pas de pousser un paquet (il circule en 
   il bascule sur le créneau ouvert en cours dès que l'actif est terminé (événement `active-session`) ;
   un créneau ouvert dont la fin est passée est clos si `auto_close` (défaut : non). Un créneau clos automatiquement
   puis rouvert à la main n'est pas reclos (mémoire du thread). Événement front : `session-auto`.
+- Répétition (série) : `sessions::create_series` crée d'un coup un créneau ordinaire par date (`domain::recurrence_plan` :
+  jours 1 = lundi … 7, une semaine sur N comptée depuis la semaine du premier, jusqu'à une date ou N créneaux, fériés
+  français sautés en option ; 200 créneaux / 1 an au plus). Table `session_series`, colonne `sessions.series_id`.
+  Modifier / supprimer avec une portée (`SeriesScope` : ce créneau, celui-ci et les suivants, toute la série) ne touche
+  que les créneaux encore **prévus** ; « ce créneau seulement » le sort de la série. Les vacances ne sont pas gérées.
 - Sources : `badge`, `manual` (correction du prof), `auto` (clôture).
 - UID stocké au format `04:24:A5:82:E6:19:90` (`nfc::format_uid`). Les UID aléatoires (4 octets commençant par `0x08`) sont refusés.
 - Un seul créneau « actif » reçoit les badges : c'est celui ouvert ou affiché dans l'écran d'émargement.

@@ -1,7 +1,8 @@
 //! Règles métier pures (sans base de données).
 
-use crate::model::{SessionState, Status};
-use chrono::{Duration, NaiveDateTime};
+use crate::model::{Recurrence, SeriesPlan, SessionState, Status};
+use crate::{Error, Result};
+use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime};
 use serde::Serialize;
 
 /// Statut d'un badge : présent jusqu'à `début + seuil` inclus, en retard ensuite.
@@ -120,6 +121,78 @@ impl Tally {
     }
 }
 
+// ---------- Répétition des créneaux ----------
+
+/// Garde-fou : une série ne crée jamais plus de créneaux que cela.
+pub const MAX_SERIES: usize = 200;
+/// Une série ne s'étend pas au-delà d'un an après sa première date.
+const MAX_SERIES_DAYS: i64 = 366;
+
+/// Dimanche de Pâques (calendrier grégorien, algorithme de Meeus/Jones/Butcher).
+pub fn easter(year: i32) -> NaiveDate {
+    let a = year % 19;
+    let (b, c) = (year / 100, year % 100);
+    let (d, e) = (b / 4, b % 4);
+    let f = (b + 8) / 25;
+    let g = (b - f + 1) / 3;
+    let h = (19 * a + b - d - g + 15) % 30;
+    let (i, k) = (c / 4, c % 4);
+    let l = (32 + 2 * e + 2 * i - h - k) % 7;
+    let m = (a + 11 * h + 22 * l) / 451;
+    let month = (h + l - 7 * m + 114) / 31;
+    let day = (h + l - 7 * m + 114) % 31 + 1;
+    NaiveDate::from_ymd_opt(year, month as u32, day as u32).expect("date de Pâques valide")
+}
+
+/// Jour férié en France métropolitaine (fêtes fixes, lundi de Pâques, Ascension, lundi de Pentecôte).
+pub fn is_french_holiday(d: NaiveDate) -> bool {
+    const FIXED: [(u32, u32); 8] = [(1, 1), (5, 1), (5, 8), (7, 14), (8, 15), (11, 1), (11, 11), (12, 25)];
+    if FIXED.contains(&(d.month(), d.day())) {
+        return true;
+    }
+    let e = easter(d.year());
+    [1, 39, 50].iter().any(|n| e + Duration::days(*n) == d)
+}
+
+/// Dates d'une série à partir de `first` (incluse si elle correspond à la règle).
+/// Les semaines se comptent depuis le lundi de la semaine de `first` : avec `interval_weeks = 2`,
+/// on garde la semaine de `first`, puis une sur deux.
+pub fn recurrence_plan(first: NaiveDate, rule: &Recurrence) -> Result<SeriesPlan> {
+    if rule.weekdays.is_empty() || rule.weekdays.iter().any(|w| !(1..=7).contains(w)) {
+        return Err(Error::Invalid("Choisissez au moins un jour de la semaine".into()));
+    }
+    if !(1..=4).contains(&rule.interval_weeks) {
+        return Err(Error::Invalid("L'intervalle doit être de 1 à 4 semaines".into()));
+    }
+    let limit = first + Duration::days(MAX_SERIES_DAYS);
+    let until = match (rule.until, rule.count) {
+        (Some(u), _) if u < first => return Err(Error::Invalid("La date de fin est avant le premier créneau".into())),
+        (Some(u), _) => u.min(limit),
+        (None, Some(n)) if n >= 1 => limit,
+        _ => return Err(Error::Invalid("Indiquez une date de fin ou un nombre de créneaux".into())),
+    };
+    let max = rule.count.map_or(MAX_SERIES, |n| (n as usize).min(MAX_SERIES));
+    let week0 = first - Duration::days(first.weekday().num_days_from_monday() as i64);
+    let mut plan = SeriesPlan::default();
+    let mut d = first;
+    while d <= until && plan.dates.len() < max {
+        let week = (d - week0).num_days() / 7;
+        let weekday = d.weekday().number_from_monday() as u8;
+        if week % rule.interval_weeks as i64 == 0 && rule.weekdays.contains(&weekday) {
+            if rule.skip_holidays && is_french_holiday(d) {
+                plan.skipped.push(d);
+            } else {
+                plan.dates.push(d);
+            }
+        }
+        d += Duration::days(1);
+    }
+    if plan.dates.is_empty() {
+        return Err(Error::Invalid("Aucune date ne correspond à cette répétition".into()));
+    }
+    Ok(plan)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,5 +284,85 @@ mod tests {
         assert_eq!(t.absent, 2);
         assert!((t.attendance_rate() - 0.5).abs() < 1e-9);
         assert_eq!(Tally::default().attendance_rate(), 0.0);
+    }
+
+    fn d(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    fn rule(weekdays: &[u8], interval: u32, until: Option<&str>, count: Option<u32>, skip: bool) -> Recurrence {
+        Recurrence { weekdays: weekdays.to_vec(), interval_weeks: interval, until: until.map(d), count, skip_holidays: skip }
+    }
+
+    #[test]
+    fn easter_dates() {
+        assert_eq!(easter(2026), d("2026-04-05"));
+        assert_eq!(easter(2027), d("2027-03-28"));
+        assert_eq!(easter(2024), d("2024-03-31"));
+    }
+
+    #[test]
+    fn french_holidays() {
+        assert!(is_french_holiday(d("2026-12-25")));
+        assert!(is_french_holiday(d("2027-01-01")));
+        assert!(is_french_holiday(d("2027-03-29"))); // lundi de Pâques
+        assert!(is_french_holiday(d("2027-05-06"))); // Ascension
+        assert!(is_french_holiday(d("2027-05-17"))); // lundi de Pentecôte
+        assert!(!is_french_holiday(d("2026-12-24")));
+    }
+
+    #[test]
+    fn weekdays_until_date() {
+        // Du lundi au vendredi, du lun. 30 nov. au ven. 18 déc. 2026 : 15 créneaux.
+        let p = recurrence_plan(d("2026-11-30"), &rule(&[1, 2, 3, 4, 5], 1, Some("2026-12-18"), None, false)).unwrap();
+        assert_eq!(p.dates.len(), 15);
+        assert_eq!(p.dates[0], d("2026-11-30"));
+        assert_eq!(*p.dates.last().unwrap(), d("2026-12-18"));
+        assert!(p.dates.iter().all(|x| x.weekday().number_from_monday() <= 5));
+    }
+
+    #[test]
+    fn first_date_not_matching_is_skipped() {
+        // Début un mercredi, répétition le lundi seulement : premier créneau le lundi suivant.
+        let p = recurrence_plan(d("2026-12-02"), &rule(&[1], 1, None, Some(2), false)).unwrap();
+        assert_eq!(p.dates, vec![d("2026-12-07"), d("2026-12-14")]);
+    }
+
+    #[test]
+    fn every_other_week() {
+        // Semaine du premier créneau, puis une sur deux (même si on commence un jeudi).
+        let p = recurrence_plan(d("2026-12-03"), &rule(&[1, 4], 2, Some("2026-12-31"), None, false)).unwrap();
+        assert_eq!(p.dates, vec![d("2026-12-03"), d("2026-12-14"), d("2026-12-17"), d("2026-12-28"), d("2026-12-31")]);
+    }
+
+    #[test]
+    fn count_and_holidays() {
+        // Vendredis à partir du 18 déc. : le 25 déc. et le 1er janv. sont fériés.
+        let p = recurrence_plan(d("2026-12-18"), &rule(&[5], 1, None, Some(3), true)).unwrap();
+        assert_eq!(p.dates, vec![d("2026-12-18"), d("2027-01-08"), d("2027-01-15")]);
+        assert_eq!(p.skipped, vec![d("2026-12-25"), d("2027-01-01")]);
+        // Sans l'option, les fériés sont gardés.
+        let p = recurrence_plan(d("2026-12-18"), &rule(&[5], 1, None, Some(3), false)).unwrap();
+        assert_eq!(p.dates[1], d("2026-12-25"));
+    }
+
+    #[test]
+    fn invalid_rules() {
+        let first = d("2026-11-30");
+        assert!(recurrence_plan(first, &rule(&[], 1, Some("2026-12-18"), None, false)).is_err());
+        assert!(recurrence_plan(first, &rule(&[8], 1, Some("2026-12-18"), None, false)).is_err());
+        assert!(recurrence_plan(first, &rule(&[1], 0, Some("2026-12-18"), None, false)).is_err());
+        assert!(recurrence_plan(first, &rule(&[1], 1, None, None, false)).is_err());
+        assert!(recurrence_plan(first, &rule(&[1], 1, Some("2026-11-01"), None, false)).is_err());
+        // Un seul mardi demandé sur une plage sans mardi.
+        assert!(recurrence_plan(first, &rule(&[2], 1, Some("2026-11-30"), None, false)).is_err());
+    }
+
+    #[test]
+    fn capped() {
+        let p = recurrence_plan(d("2026-01-01"), &rule(&[1, 2, 3, 4, 5, 6, 7], 1, None, Some(5000), false)).unwrap();
+        assert_eq!(p.dates.len(), MAX_SERIES);
+        let p = recurrence_plan(d("2026-01-01"), &rule(&[1], 1, Some("2030-01-01"), None, false)).unwrap();
+        assert!(*p.dates.last().unwrap() <= d("2027-01-02"));
     }
 }

@@ -6,8 +6,9 @@
   import { exportSession } from "../lib/actions";
   import { addDays, fmtDate, fmtTime, parseNaive, startOfWeek, toNaive } from "../lib/format";
   import SessionForm from "../components/SessionForm.svelte";
+  import Modal from "../components/Modal.svelte";
   import Icon from "../components/Icon.svelte";
-  import { STATE_LABEL, type Naive, type SessionRow } from "../lib/types";
+  import { SCOPE_LABEL, STATE_LABEL, type Naive, type SeriesScope, type SessionRow } from "../lib/types";
   import { layoutDay, weekHours } from "../lib/calendar";
 
   let { create = false }: { create?: boolean } = $props();
@@ -20,6 +21,7 @@
   let editing = $state<SessionRow | null | "new">(null);
   let newStart = $state<Naive | null>(null);
   let selectedId = $state<number | null>(null);
+  let deleting = $state<SessionRow | null>(null);
   let now = $state(new Date());
 
   let selected = $derived(rows.find((r) => r.id === selectedId) ?? null);
@@ -96,9 +98,24 @@
   }
 
   async function remove(s: SessionRow) {
+    if (s.series_id !== null) {
+      deleting = s;
+      return;
+    }
     const has = s.counts.present + s.counts.late + s.counts.excused > 0;
     if (!(await confirmAction(`Supprimer le créneau « ${s.title} » du ${fmtDate(s.starts_at)} ?${has ? "\n\nLes présences enregistrées seront perdues." : ""}`))) return;
     if ((await guard(api.deleteSession(s.id))) !== undefined) {
+      selectedId = null;
+      load();
+    }
+  }
+
+  async function removeScoped(scope: SeriesScope) {
+    if (!deleting) return;
+    const n = await guard(api.deleteSessionScoped(deleting.id, scope));
+    deleting = null;
+    if (n !== undefined) {
+      toast(n > 1 ? `${n} créneaux supprimés` : "Créneau supprimé", "success");
       selectedId = null;
       load();
     }
@@ -165,7 +182,7 @@
                   onclick={() => (selectedId = e.row.id)}
                   ondblclick={() => navigate(`emargement/${e.row.id}`)}
                 >
-                  <span class="ev-time">{fmtTime(e.row.starts_at)} – {fmtTime(e.row.ends_at)}</span>
+                  <span class="ev-time">{fmtTime(e.row.starts_at)} – {fmtTime(e.row.ends_at)}{#if e.row.series_id !== null}<span class="rep" title="Créneau répété"><Icon name="repeat" size={12} stroke={2.2} /></span>{/if}</span>
                   <span class="ev-title">{e.row.title}</span>
                   <span class="ev-sub">{e.row.room ? `${e.row.room} · ` : ""}{e.row.state === "planned" ? "—" : here(e.row)}/{e.row.counts.expected}</span>
                 </button>
@@ -193,6 +210,7 @@
           <dt>Présents</dt><dd><strong>{here(s)}</strong> / {s.counts.expected}{s.counts.late ? ` · ${s.counts.late} retard(s)` : ""}</dd>
           {#if s.counts.absent || s.counts.excused}<dt>Absents</dt><dd>{s.counts.absent}{s.counts.excused ? ` · ${s.counts.excused} justifié(s)` : ""}</dd>{/if}
           <dt>Retard</dt><dd>après {s.late_after_min} min</dd>
+          {#if s.series_id !== null}<dt>Répétition</dt><dd class="rep-dd"><Icon name="repeat" size={14} stroke={2} />Fait partie d'une série</dd>{/if}
         </dl>
         <div class="actions">
           <button class="primary big" onclick={() => navigate(`emargement/${s.id}`)}>{cta(s)}</button>
@@ -234,6 +252,7 @@
                   <td class="time">{fmtTime(s.starts_at)} – {fmtTime(s.ends_at)}</td>
                   <td>
                     <strong>{s.title}</strong>{#if s.room}<span class="muted"> · {s.room}</span>{/if}
+                    {#if s.series_id !== null}<span class="rep muted" title="Créneau répété"><Icon name="repeat" size={13} stroke={2} /></span>{/if}
                     <div class="small muted">{s.targets}</div>
                   </td>
                   <td class="small"><strong>{here(s)}</strong>/{s.counts.expected} présents</td>
@@ -252,6 +271,20 @@
       </section>
     {/each}
   </div>
+{/if}
+
+{#if deleting}
+  {@const d = deleting}
+  <Modal title="Supprimer un créneau répété" onclose={() => (deleting = null)}>
+    <p><strong>{d.title}</strong> · <span class="cap">{fmtDate(d.starts_at)}</span> fait partie d'une série.</p>
+    <p class="small muted">Seuls les créneaux encore prévus de la série sont supprimés : ceux déjà ouverts ou clos gardent leurs présences.</p>
+    <div class="scope-btns">
+      {#each ["one", "following", "all"] as const as sc (sc)}
+        <button class:danger={sc !== "one"} onclick={() => removeScoped(sc)}>{SCOPE_LABEL[sc]}</button>
+      {/each}
+    </div>
+    {#snippet footer()}<button onclick={() => (deleting = null)}>Annuler</button>{/snippet}
+  </Modal>
 {/if}
 
 {#if editing}
@@ -309,7 +342,12 @@
   .ev.open:hover:not(:disabled) { background: var(--present-bg); }
   .ev.closed:hover:not(:disabled) { background: var(--closed-bg); }
   .ev.sel { outline: 2px solid var(--text); outline-offset: -1px; }
-  .ev-time { font-size: 0.78rem; font-weight: 600; }
+  .ev-time { font-size: 0.78rem; font-weight: 600; display: flex; align-items: center; gap: 0.3rem; }
+  .rep { display: inline-flex; vertical-align: -2px; margin-left: 0.3rem; }
+  .ev-time .rep { margin-left: 0; }
+  .rep-dd { display: flex; align-items: center; gap: 0.35rem; }
+  .scope-btns { display: flex; flex-direction: column; gap: 0.5rem; }
+  .scope-btns button { justify-content: flex-start; }
   .ev.planned .ev-time { color: var(--excused); }
   .ev.open .ev-time { color: var(--present); }
   .ev.closed .ev-time { color: var(--text-2); }

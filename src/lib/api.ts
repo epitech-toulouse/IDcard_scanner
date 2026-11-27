@@ -39,6 +39,13 @@ export const api = {
   updateSession: (id: T.Id, input: T.SessionInput) => invoke<T.Session>("update_session", { id, input }),
   duplicateSession: (id: T.Id, startsAt: T.Naive) => invoke<T.Session>("duplicate_session", { id, startsAt }),
   deleteSession: (id: T.Id) => invoke<void>("delete_session", { id }),
+  previewSessionSeries: (startsAt: T.Naive, rule: T.Recurrence) =>
+    invoke<T.SeriesPlan>("preview_session_series", { startsAt, rule }),
+  createSessionSeries: (input: T.SessionInput, rule: T.Recurrence) =>
+    invoke<T.Session[]>("create_session_series", { input, rule }),
+  updateSessionScoped: (id: T.Id, input: T.SessionInput, scope: T.SeriesScope) =>
+    invoke<T.Session>("update_session_scoped", { id, input, scope }),
+  deleteSessionScoped: (id: T.Id, scope: T.SeriesScope) => invoke<number>("delete_session_scoped", { id, scope }),
   openSession: (id: T.Id) => invoke<void>("open_session", { id }),
   closeSession: (id: T.Id) => invoke<number>("close_session", { id }),
   reopenSession: (id: T.Id) => invoke<void>("reopen_session", { id }),

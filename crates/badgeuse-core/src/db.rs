@@ -8,6 +8,7 @@ use std::path::Path;
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/001_init.sql"),
     include_str!("../migrations/002_remote_scans.sql"),
+    include_str!("../migrations/003_session_series.sql"),
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {

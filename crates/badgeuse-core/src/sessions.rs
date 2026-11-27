@@ -7,7 +7,7 @@ use chrono::NaiveDateTime;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use std::collections::HashSet;
 
-const SESSION_COLS: &str = "id, title, room, starts_at, ends_at, late_after_min, state";
+const SESSION_COLS: &str = "id, title, room, starts_at, ends_at, late_after_min, state, series_id";
 
 fn session_from_row(r: &Row) -> rusqlite::Result<Session> {
     Ok(Session {
@@ -18,6 +18,7 @@ fn session_from_row(r: &Row) -> rusqlite::Result<Session> {
         ends_at: r.get(4)?,
         late_after_min: r.get(5)?,
         state: r.get(6)?,
+        series_id: r.get(7)?,
     })
 }
 
@@ -55,17 +56,117 @@ fn write_targets(c: &Connection, id: Id, i: &SessionInput) -> Result<()> {
     Ok(())
 }
 
+fn clean_room(i: &SessionInput) -> Option<&str> {
+    i.room.as_deref().map(str::trim).filter(|r| !r.is_empty())
+}
+
+fn insert(c: &Connection, i: &SessionInput, series_id: Option<Id>) -> Result<Id> {
+    c.execute(
+        "INSERT INTO sessions(title, room, starts_at, ends_at, late_after_min, series_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![i.title.trim(), clean_room(i), i.starts_at, i.ends_at, i.late_after_min, series_id],
+    )?;
+    let id = c.last_insert_rowid();
+    write_targets(c, id, i)?;
+    Ok(id)
+}
+
 pub fn create(c: &Connection, i: &SessionInput) -> Result<Session> {
     validate(i)?;
     let tx = c.unchecked_transaction()?;
-    tx.execute(
-        "INSERT INTO sessions(title, room, starts_at, ends_at, late_after_min) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![i.title.trim(), i.room.as_deref().map(str::trim).filter(|r| !r.is_empty()), i.starts_at, i.ends_at, i.late_after_min],
-    )?;
-    let id = tx.last_insert_rowid();
-    write_targets(&tx, id, i)?;
+    let id = insert(&tx, i, None)?;
     tx.commit()?;
     get(c, id)
+}
+
+// ---------- Séries (créneaux répétés) ----------
+
+/// Dates qu'une série créerait à partir du début de `starts_at` (aperçu, rien n'est écrit).
+pub fn preview_series(starts_at: NaiveDateTime, rule: &Recurrence) -> Result<SeriesPlan> {
+    crate::domain::recurrence_plan(starts_at.date(), rule)
+}
+
+/// Crée un créneau par date de la série : mêmes horaires, salle, seuil de retard et cibles que `i`.
+pub fn create_series(c: &Connection, i: &SessionInput, rule: &Recurrence) -> Result<Vec<Session>> {
+    validate(i)?;
+    let plan = preview_series(i.starts_at, rule)?;
+    let (time, length) = (i.starts_at.time(), i.ends_at - i.starts_at);
+    let tx = c.unchecked_transaction()?;
+    let rule_json = serde_json::to_string(rule).map_err(|e| Error::Invalid(e.to_string()))?;
+    tx.execute("INSERT INTO session_series(rule_json, created_at) VALUES (?1, ?2)", params![rule_json, db::now()])?;
+    let series = tx.last_insert_rowid();
+    let mut ids = Vec::with_capacity(plan.dates.len());
+    for d in &plan.dates {
+        let starts_at = d.and_time(time);
+        ids.push(insert(&tx, &SessionInput { starts_at, ends_at: starts_at + length, ..i.clone() }, Some(series))?);
+    }
+    tx.commit()?;
+    ids.into_iter().map(|id| get(c, id)).collect()
+}
+
+/// Autres créneaux de la série touchés par `scope` : seulement ceux encore prévus
+/// (un créneau ouvert ou clos garde ses horaires et ses présences).
+fn series_targets(c: &Connection, s: &Session, scope: SeriesScope) -> Result<Vec<Session>> {
+    let Some(series) = s.series_id else { return Ok(vec![]) };
+    if scope == SeriesScope::One {
+        return Ok(vec![]);
+    }
+    let sql = format!(
+        "SELECT {SESSION_COLS} FROM sessions WHERE series_id = ?1 AND id <> ?2 AND state = 'planned'
+         AND (?3 = 0 OR starts_at > ?4) ORDER BY starts_at"
+    );
+    let following = scope == SeriesScope::Following;
+    Ok(c.prepare(&sql)?
+        .query_map(params![series, s.id, following, s.starts_at], session_from_row)?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// Modifie un créneau et, selon `scope`, les autres créneaux prévus de sa série.
+/// Pour eux : mêmes intitulé, salle, seuil, cibles et horaires ; un changement de date du créneau
+/// modifié les décale du même nombre de jours. « Ce créneau seulement » le sort de la série.
+/// Renvoie le créneau modifié.
+pub fn update_scoped(c: &Connection, id: Id, i: &SessionInput, scope: SeriesScope) -> Result<Session> {
+    validate(i)?;
+    let before = get(c, id)?;
+    let others = series_targets(c, &before, scope)?;
+    let shift = i.starts_at.date() - before.starts_at.date();
+    let (time, length) = (i.starts_at.time(), i.ends_at - i.starts_at);
+    let tx = c.unchecked_transaction()?;
+    let n = tx.execute(
+        "UPDATE sessions SET title=?1, room=?2, starts_at=?3, ends_at=?4, late_after_min=?5 WHERE id=?6",
+        params![i.title.trim(), clean_room(i), i.starts_at, i.ends_at, i.late_after_min, id],
+    )?;
+    if n == 0 {
+        return Err(Error::NotFound("Créneau"));
+    }
+    write_targets(&tx, id, i)?;
+    if scope == SeriesScope::One && before.series_id.is_some() {
+        tx.execute("UPDATE sessions SET series_id = NULL WHERE id = ?1", [id])?;
+    }
+    for o in &others {
+        let starts_at = (o.starts_at.date() + shift).and_time(time);
+        tx.execute(
+            "UPDATE sessions SET title=?1, room=?2, starts_at=?3, ends_at=?4, late_after_min=?5 WHERE id=?6",
+            params![i.title.trim(), clean_room(i), starts_at, starts_at + length, i.late_after_min, o.id],
+        )?;
+        write_targets(&tx, o.id, i)?;
+    }
+    tx.commit()?;
+    get(c, id)
+}
+
+/// Supprime un créneau et, selon `scope`, les autres créneaux prévus de sa série.
+/// Renvoie les ids supprimés.
+pub fn delete_scoped(c: &Connection, id: Id, scope: SeriesScope) -> Result<Vec<Id>> {
+    let s = get(c, id)?;
+    let mut ids = vec![id];
+    ids.extend(series_targets(c, &s, scope)?.iter().map(|o| o.id));
+    let tx = c.unchecked_transaction()?;
+    for i in &ids {
+        tx.execute("DELETE FROM sessions WHERE id = ?1", [*i])?;
+    }
+    tx.execute("DELETE FROM session_series WHERE id NOT IN (SELECT series_id FROM sessions WHERE series_id IS NOT NULL)", [])?;
+    tx.commit()?;
+    Ok(ids)
 }
 
 pub fn update(c: &Connection, id: Id, i: &SessionInput) -> Result<Session> {
@@ -217,4 +318,104 @@ pub fn resolve_active(c: &Connection, current: Option<Id>, now: NaiveDateTime) -
     let open = st.query_map([], session_from_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
     let open: Vec<_> = open.iter().map(key).collect();
     Ok(crate::domain::pick_active(cur, &open, now))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::attendance::tests::{dt, fixture};
+    use chrono::NaiveDate;
+
+    fn weekdays_rule(until: &str) -> Recurrence {
+        Recurrence {
+            weekdays: vec![1, 2, 3, 4, 5],
+            interval_weeks: 1,
+            until: Some(NaiveDate::parse_from_str(until, "%Y-%m-%d").unwrap()),
+            count: None,
+            skip_holidays: true,
+        }
+    }
+
+    fn base(c: &Connection, s: Id) -> SessionInput {
+        let r = row(c, s).unwrap();
+        SessionInput {
+            title: "Émargement du matin".into(),
+            room: Some("204".into()),
+            starts_at: dt("2026-11-30 09:00"),
+            ends_at: dt("2026-11-30 09:30"),
+            late_after_min: 10,
+            group_ids: r.group_ids,
+            cohort_ids: r.cohort_ids,
+        }
+    }
+
+    #[test]
+    fn creates_one_session_per_date() {
+        let (c, s, ..) = fixture();
+        let created = create_series(&c, &base(&c, s), &weekdays_rule("2026-12-18")).unwrap();
+        assert_eq!(created.len(), 15);
+        let series = created[0].series_id.unwrap();
+        assert!(created.iter().all(|x| x.series_id == Some(series) && x.state == SessionState::Planned));
+        assert_eq!(created[14].starts_at, dt("2026-12-18 09:00"));
+        assert_eq!(created[14].ends_at, dt("2026-12-18 09:30"));
+        // Mêmes cibles que le modèle.
+        assert_eq!(row(&c, created[3].id).unwrap().group_ids, row(&c, s).unwrap().group_ids);
+        // Un créneau isolé n'a pas de série.
+        assert_eq!(get(&c, s).unwrap().series_id, None);
+    }
+
+    #[test]
+    fn update_following_skips_open_and_past() {
+        let (c, s, ..) = fixture();
+        let ids: Vec<Id> = create_series(&c, &base(&c, s), &weekdays_rule("2026-12-04")).unwrap().iter().map(|x| x.id).collect();
+        // Le 1er (lun.) est clos, on modifie le 3e (mer.) et les suivants.
+        set_state(&c, ids[0], SessionState::Closed).unwrap();
+        let mut i = base(&c, s);
+        i.title = "Appel".into();
+        i.starts_at = dt("2026-12-02 09:15");
+        i.ends_at = dt("2026-12-02 09:45");
+        update_scoped(&c, ids[2], &i, SeriesScope::Following).unwrap();
+        let all: Vec<Session> = ids.iter().map(|id| get(&c, *id).unwrap()).collect();
+        assert_eq!(all[0].title, "Émargement du matin");
+        assert_eq!(all[1].starts_at, dt("2026-12-01 09:00"));
+        assert_eq!(all[2].starts_at, dt("2026-12-02 09:15"));
+        assert_eq!(all[4].title, "Appel");
+        assert_eq!(all[4].starts_at, dt("2026-12-04 09:15"));
+        assert_eq!(all[4].ends_at, dt("2026-12-04 09:45"));
+    }
+
+    #[test]
+    fn update_all_shifts_dates_and_one_detaches() {
+        let (c, s, ..) = fixture();
+        let ids: Vec<Id> = create_series(&c, &base(&c, s), &weekdays_rule("2026-12-04")).unwrap().iter().map(|x| x.id).collect();
+        set_state(&c, ids[0], SessionState::Open).unwrap();
+        // Toute la série, décalée d'un jour depuis le 2e créneau ; l'ouvert ne bouge pas.
+        let mut i = base(&c, s);
+        i.starts_at = dt("2026-12-02 10:00");
+        i.ends_at = dt("2026-12-02 11:00");
+        update_scoped(&c, ids[1], &i, SeriesScope::All).unwrap();
+        assert_eq!(get(&c, ids[0]).unwrap().starts_at, dt("2026-11-30 09:00"));
+        assert_eq!(get(&c, ids[4]).unwrap().starts_at, dt("2026-12-05 10:00"));
+        // Ce créneau seulement : il sort de la série, les autres ne changent pas.
+        i.title = "Exception".into();
+        let one = update_scoped(&c, ids[3], &i, SeriesScope::One).unwrap();
+        assert_eq!(one.series_id, None);
+        assert_eq!(get(&c, ids[4]).unwrap().title, "Émargement du matin");
+    }
+
+    #[test]
+    fn delete_scopes() {
+        let (c, s, ..) = fixture();
+        let ids: Vec<Id> = create_series(&c, &base(&c, s), &weekdays_rule("2026-12-04")).unwrap().iter().map(|x| x.id).collect();
+        set_state(&c, ids[0], SessionState::Closed).unwrap();
+        assert_eq!(delete_scoped(&c, ids[1], SeriesScope::One).unwrap(), vec![ids[1]]);
+        assert_eq!(delete_scoped(&c, ids[2], SeriesScope::Following).unwrap(), vec![ids[2], ids[3], ids[4]]);
+        // Le créneau clos reste, et la série tant qu'il en fait partie.
+        assert!(get(&c, ids[0]).is_ok());
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM session_series", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+        delete_scoped(&c, ids[0], SeriesScope::All).unwrap();
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM session_series", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0);
+    }
 }
