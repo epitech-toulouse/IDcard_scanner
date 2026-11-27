@@ -3,7 +3,7 @@
 //! L'enregistrement en base est dans `attendance::record_remote_scan`.
 
 use crate::attendance::ScanOutcome;
-use crate::model::{Counts, Status};
+use crate::model::{Counts, Session, SessionRow, Status};
 use crate::nfc::Feedback;
 use chrono::{Duration, NaiveDateTime};
 use serde::{Deserialize, Serialize};
@@ -75,6 +75,52 @@ pub struct RemoteReply {
     /// Avancement de ce créneau après le badge.
     #[serde(default)]
     pub progress: Option<Progress>,
+    /// Créneau qui a reçu le badge (repère, salle, horaires), pour orienter l'étudiant.
+    #[serde(default)]
+    pub session: Option<RemoteSession>,
+}
+
+/// Un créneau tel que la borne l'affiche : intitulé, salle, horaires et totaux, aucun nom d'étudiant.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RemoteSession {
+    /// Rang parmi les créneaux ouverts (0 = A, 1 = B…), absent pour un créneau déjà clos.
+    pub tag: Option<u32>,
+    pub title: String,
+    pub room: Option<String>,
+    pub starts_at: NaiveDateTime,
+    pub ends_at: NaiveDateTime,
+    pub progress: Progress,
+}
+
+impl RemoteSession {
+    pub fn from_row(r: &SessionRow, tag: Option<usize>) -> RemoteSession {
+        RemoteSession {
+            tag: tag.and_then(|t| u32::try_from(t).ok()),
+            title: r.session.title.clone(),
+            room: r.session.room.clone().filter(|x| !x.trim().is_empty()),
+            starts_at: r.session.starts_at,
+            ends_at: r.session.ends_at,
+            progress: Progress::from_counts(&r.counts),
+        }
+    }
+
+    /// Créneaux ouverts (déjà triés, voir `sessions::open_rows`), repérés A, B, C…
+    pub fn list(rows: &[SessionRow]) -> Vec<RemoteSession> {
+        rows.iter().enumerate().map(|(i, r)| RemoteSession::from_row(r, Some(i))).collect()
+    }
+}
+
+/// Prochain créneau prévu dans la journée (borne en attente).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NextSession {
+    pub title: String,
+    pub starts_at: NaiveDateTime,
+}
+
+impl NextSession {
+    pub fn from_session(s: &Session) -> NextSession {
+        NextSession { title: s.title.clone(), starts_at: s.starts_at }
+    }
 }
 
 /// Avancement de l'émargement affiché sur la borne (ex. 10 / 24) : des totaux, aucun nom.
@@ -93,17 +139,36 @@ impl Progress {
     }
 }
 
-/// Réponse au signal de vie : de quoi afficher l'état du créneau en attendant un badge.
+/// Réponse au signal de vie : de quoi afficher l'état des créneaux en attendant un badge.
+/// `session_title` et `progress` (premier créneau ouvert) restent pour les bornes d'avant `sessions`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct HeartbeatReply {
-    /// Intitulé du créneau ouvert qui reçoit les badges, s'il y en a un.
+    /// Intitulé du premier créneau ouvert, s'il y en a un.
     pub session_title: Option<String>,
     /// Mise à jour publiée dans l'appli, s'il y en a une (la borne décide si elle est plus récente).
     #[serde(default)]
     pub update: Option<crate::update::UpdateOffer>,
-    /// Avancement du créneau ouvert (présents / attendus).
+    /// Avancement du premier créneau ouvert (présents / attendus).
     #[serde(default)]
     pub progress: Option<Progress>,
+    /// Tous les créneaux ouverts, repérés A, B, C… (vide pour une appli d'avant les émargements simultanés).
+    #[serde(default)]
+    pub sessions: Vec<RemoteSession>,
+    /// Prochain créneau prévu aujourd'hui.
+    #[serde(default)]
+    pub next: Option<NextSession>,
+}
+
+impl HeartbeatReply {
+    pub fn new(sessions: Vec<RemoteSession>, next: Option<NextSession>, update: Option<crate::update::UpdateOffer>) -> Self {
+        HeartbeatReply {
+            session_title: sessions.first().map(|s| s.title.clone()),
+            progress: sessions.first().map(|s| s.progress),
+            sessions,
+            next,
+            update,
+        }
+    }
 }
 
 /// Résultat du traitement d'un badge distant. `outcome` vaut `None` pour un rejeu déjà traité
@@ -132,6 +197,7 @@ impl RemoteReply {
             feedback,
             session_title: None,
             progress: None,
+            session: None,
         };
         match o {
             ScanOutcome::Recorded { student, status, .. } => reply(
@@ -150,7 +216,7 @@ impl RemoteReply {
                 ReplyKind::NotExpected,
                 Some(short_name(&student.first_name, &student.last_name)),
                 None,
-                "Vous n'êtes pas attendu sur ce créneau",
+                "Vous n'êtes attendu dans aucun créneau en cours",
             ),
             ScanOutcome::UnknownCard { .. } => {
                 reply(ReplyKind::UnknownCard, None, None, "Carte inconnue, voir l'enseignant")
@@ -272,6 +338,7 @@ mod tests {
             student: student(),
             status: Status::Late,
             scanned_at: dt("2026-11-17 08:15:00"),
+            session_id: 1,
         };
         let r = RemoteReply::from_outcome(&o);
         assert_eq!(r.display_name.as_deref(), Some("Alice D."));
@@ -284,5 +351,26 @@ mod tests {
         assert_eq!((unknown.kind, unknown.feedback), (ReplyKind::UnknownCard, Feedback::Error));
         let none = RemoteReply::from_outcome(&ScanOutcome::Identified { uid: "04:FF".into(), student: None });
         assert_eq!(none.kind, ReplyKind::UnknownCard);
+    }
+
+    #[test]
+    fn heartbeat_lists_open_sessions_and_stays_readable_by_old_kiosks() {
+        let mk = |tag, title: &str, here| RemoteSession {
+            tag: Some(tag),
+            title: title.into(),
+            room: Some("B12".into()),
+            starts_at: dt("2026-11-17 14:00:00"),
+            ends_at: dt("2026-11-17 16:00:00"),
+            progress: Progress { here, expected: 12 },
+        };
+        let hb = HeartbeatReply::new(vec![mk(0, "TD", 3), mk(1, "TP", 5)], None, None);
+        // Ancienne borne : seul le premier créneau, comme avant.
+        assert_eq!((hb.session_title.as_deref(), hb.progress), (Some("TD"), Some(Progress { here: 3, expected: 12 })));
+        assert_eq!(hb.sessions.len(), 2);
+        // Ancienne appli : pas de liste, la borne lit quand même la réponse.
+        let old: HeartbeatReply = serde_json::from_str(r#"{"session_title":"TD","progress":{"here":1,"expected":2}}"#).unwrap();
+        assert!(old.sessions.is_empty() && old.next.is_none());
+        let empty = HeartbeatReply::new(vec![], None, None);
+        assert!(empty.session_title.is_none() && empty.progress.is_none());
     }
 }

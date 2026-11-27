@@ -79,22 +79,25 @@ crates/badgeuse-kiosk/   borne de scan (Raspberry Pi) : binaire séparé, sans T
                  postinst : coupe le bureau (lightdm…, cible multi-user, rétabli par postrm), active borne + affichage si le
                  jeton est renseigné ; dist/cursor : curseur invisible (thème « default » privé via XCURSOR_PATH : cage ignore XCURSOR_THEME) ; Chromium en --password-store=basic (pas de trousseau) ; profil Chromium dans /run/badgeuse-display
 src-tauri/src/
-  lib.rs         état (Mutex<Connection>, créneau actif), un thread par lecteur + superviseur PC/SC → événements
+  lib.rs         état (Mutex<Connection>, créneau affiché = préféré), un thread par lecteur + superviseur PC/SC → événements
   commands.rs    #[tauri::command] fins qui délèguent au core
   app_update.rs  mise à jour de l'appli : vérification au démarrage + chaque jour (événement `app-update`), installation puis redémarrage
   remote_server.rs  serveur HTTP (axum) des bornes : POST /api/scan et /api/heartbeat, jeton Bearer, → card-scanned
 src/
   lib/api.ts     wrappers typés des commandes et des événements
   lib/app.svelte.ts   route (#/page/id), statut lecteur, créneau actif, toasts, dialogues natifs
+  lib/sessionTags.ts  repères A, B, C… des créneaux ouverts (ordre début puis id, comme `sessions::open_rows`) ; couleurs `.tag-N` (app.css)
   lib/calendar.ts     placement des créneaux dans la vue semaine (pistes en cas de chevauchement)
-  pages/         Accueil (« Aujourd'hui »), Emargement (écran live + projection), Affichage (plein écran : créneau actif jusqu'à début + retard, puis « prochain émargement à … »), Creneaux (agenda semaine / liste), Etudiants, Groupes (même entrée de menu, onglets), Exports, Cartes (test), Reglages
+  pages/         Accueil (« Aujourd'hui »), Emargement (écran live + projection ; une carte par créneau ouvert quand il y en a plusieurs), Affichage (plein écran : créneau actif jusqu'à début + retard, puis « prochain émargement à … »), Creneaux (agenda semaine / liste), Etudiants, Groupes (même entrée de menu, onglets), Exports, Cartes (test), Reglages
   components/    Icon (SVG locaux), Modal, TargetPicker, StudentPicker, Projection, SessionForm, StudentForm, ImportWizard…
 ```
 
 Flux d'un badge :
 1. Le thread `nfc-reader` détecte la carte.
-2. `on_card` (lib.rs) appelle `attendance::record_scan`, ou `identify` si aucun créneau n'est actif.
-3. L'événement `card-scanned` (un `ScanOutcome`) part vers le front, avec le retour LED/bip.
+2. `on_card` (lib.rs) appelle `attendance::scan` : le badge va au créneau **ouvert** où l'étudiant est attendu
+   (`domain::pick_scan_session`, voir « Plusieurs créneaux ouverts ») ; aucun créneau ouvert → `identify`.
+3. L'événement `card-scanned` (un `ScanOutcome`, avec `session_id` pour un badge enregistré / déjà compté) part vers le
+   front, avec le retour LED/bip.
 4. Une carte inconnue ouvre `StudentPicker`, puis `link_card` puis `rescan`.
 
 Mode « Test cartes » (`set_card_test`, actif tant que la page `#/cartes` est affichée) : `on_card` émet
@@ -103,10 +106,13 @@ Mode « Test cartes » (`set_card_test`, actif tant que la page `#/cartes` est a
 Flux d'un badge de **borne** (réglage `remote_enabled`, désactivé par défaut ; activation et port pris en compte au démarrage) :
 1. La borne écrit le badge dans sa file locale, puis l'envoie (`POST /api/scan`, `RemoteScan` avec `scan_id` unique).
 2. `remote_server.rs` vérifie le jeton, puis `attendance::record_remote_scan` : même scan_id = même réponse (table `remote_scans`,
-   purgée à 30 jours) ; heure corrigée de l'écart d'horloge de la borne (le Pi n'a pas de pile) ; créneau = l'actif si la
-   fenêtre du badge le contient, sinon le créneau ouvert **ou clos** de cette fenêtre où l'étudiant est attendu
-   (`domain::pick_remote_session`). Un badge rejoué après la clôture remplace l'absence `auto`.
-3. L'événement `card-scanned` part vers le front comme pour un badge local ; la borne reçoit une `RemoteReply` minimale.
+   purgée à 30 jours) ; heure corrigée de l'écart d'horloge de la borne (le Pi n'a pas de pile) ; créneau choisi comme pour
+   un badge local, avec en plus les créneaux **clos** depuis dont la fenêtre contient l'heure du badge. Un badge rejoué
+   après la clôture remplace l'absence `auto`.
+3. L'événement `card-scanned` part vers le front comme pour un badge local ; la borne reçoit une `RemoteReply` minimale
+   (avec `session` : repère, intitulé, salle, horaires du créneau qui a reçu le badge). Le signal de vie renvoie tous les
+   créneaux ouverts (`HeartbeatReply.sessions`, repérés A, B…) et le prochain prévu aujourd'hui (`next`) ;
+   `session_title` / `progress` (premier créneau) restent pour les bornes plus anciennes.
 4. Hors ligne, la borne garde le badge et le renvoie dans l'ordre (toutes les 10 s) avec son heure d'origine.
    En mode « Test cartes », un badge rejoué (`RemoteScan::is_replay`) est refusé en 503 pour que la borne le garde.
    Une borne apparaît dans `ReadersStatus` (`backend: "remote"`, nom `borne:<device>`), hors ligne après 30 s sans signal.
@@ -149,8 +155,13 @@ plus ancienne ; le jeton seul ne permet pas de pousser un paquet (il circule en 
   que les créneaux encore **prévus** ; « ce créneau seulement » le sort de la série. Les vacances ne sont pas gérées.
 - Sources : `badge`, `manual` (correction du prof), `auto` (clôture).
 - UID stocké au format `04:24:A5:82:E6:19:90` (`nfc::format_uid`). Les UID aléatoires (4 octets commençant par `0x08`) sont refusés.
-- Un seul créneau « actif » reçoit les badges : c'est celui ouvert ou affiché dans l'écran d'émargement.
-- Multi-lecteurs : en PC/SC, un thread par lecteur (clé = nom PC/SC) ; un superviseur détecte les lecteurs branchés en cours de route. Tous alimentent le même créneau actif. L'anti-rebond de 3 s est par lecteur. L'USB direct et le simulé restent mono-lecteur. Le front reçoit une vue agrégée `ReadersStatus` (événement `reader-status`).
+- **Plusieurs créneaux ouverts** en même temps (TD en parallèle…) : tous reçoivent les badges. `domain::pick_scan_session`
+  choisit, parmi les créneaux ouverts où l'étudiant est attendu (ou a déjà une ligne) : d'abord ceux dont la fenêtre
+  (`début − avance` → fin) contient l'heure du badge, puis ceux où le badge change quelque chose (pas déjà présent/retard),
+  puis le créneau affiché dans l'écran d'émargement (« actif », `set_active_session`), puis le plus tôt commencé.
+  Attendu nulle part → `not_expected` : l'écran d'émargement propose de l'ajouter au créneau ouvert choisi.
+  Repères A, B, C… = rang parmi les ouverts (début, puis id), mêmes couleurs dans l'appli et sur la borne.
+- Multi-lecteurs : en PC/SC, un thread par lecteur (clé = nom PC/SC) ; un superviseur détecte les lecteurs branchés en cours de route. Tous alimentent les mêmes créneaux ouverts. L'anti-rebond de 3 s est par lecteur. L'USB direct et le simulé restent mono-lecteur. Le front reçoit une vue agrégée `ReadersStatus` (événement `reader-status`).
 
 ## Conventions
 

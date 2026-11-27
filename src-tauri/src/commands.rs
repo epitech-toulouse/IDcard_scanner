@@ -225,13 +225,8 @@ pub fn accept_unexpected(state: S, session_id: Id, student_id: Id) -> Result<Sta
 /// Rejoue un UID (après association d'une carte inconnue) ; le résultat arrive aussi en événement.
 #[tauri::command]
 pub fn rescan(app: AppHandle, state: S, uid: String) -> Result<ScanOutcome> {
-    let active = state.active();
-    let c = state.db();
-    let outcome = match active {
-        Some(sid) => attendance::record_scan(&c, sid, &uid, db::now())?,
-        None => attendance::identify(&c, &uid)?,
-    };
-    drop(c);
+    let focus = state.active();
+    let outcome = attendance::scan(&state.db(), focus, &uid, db::now())?;
     let _ = tauri::Emitter::emit(&app, "card-scanned", &outcome);
     Ok(outcome)
 }

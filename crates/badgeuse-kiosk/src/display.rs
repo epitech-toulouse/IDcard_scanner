@@ -2,7 +2,7 @@
 
 use badgeuse_core::model::Status;
 use badgeuse_core::nfc::Feedback;
-use badgeuse_core::remote::{Progress, RemoteReply, ReplyKind};
+use badgeuse_core::remote::{NextSession, Progress, RemoteReply, RemoteSession, ReplyKind};
 use serde::Serialize;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -30,12 +30,21 @@ pub struct Shown {
     pub status: Option<Status>,
     pub message: String,
     pub feedback: Feedback,
+    /// Créneau qui a reçu le badge (repère, salle, horaires).
+    pub session: Option<RemoteSession>,
 }
 
 impl Shown {
     pub fn from_reply(r: &RemoteReply) -> Shown {
         let kind = serde_json::to_value(r.kind).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default();
-        Shown { kind, name: r.display_name.clone(), status: r.status, message: r.message.clone(), feedback: r.feedback }
+        Shown {
+            kind,
+            name: r.display_name.clone(),
+            status: r.status,
+            message: r.message.clone(),
+            feedback: r.feedback,
+            session: r.session.clone(),
+        }
     }
 
     /// Badge gardé en file : l'appli n'a pas pu répondre, donc pas de nom à afficher.
@@ -46,11 +55,12 @@ impl Shown {
             status: None,
             message: "Badge enregistré, transmission en attente".into(),
             feedback: Feedback::Warn,
+            session: None,
         }
     }
 
     pub fn local_error(message: &str) -> Shown {
-        Shown { kind: "error".into(), name: None, status: None, message: message.into(), feedback: Feedback::Error }
+        Shown { kind: "error".into(), name: None, status: None, message: message.into(), feedback: Feedback::Error, session: None }
     }
 
     pub fn random_uid() -> Shown {
@@ -62,6 +72,7 @@ impl Shown {
             feedback: Feedback::Error,
             session_title: None,
             progress: None,
+            session: None,
         };
         Shown::from_reply(&r)
     }
@@ -70,9 +81,14 @@ impl Shown {
 struct Inner {
     network: Network,
     pending: u32,
+    /// Premier créneau ouvert (appli d'avant les émargements simultanés : seule information reçue).
     session: Option<String>,
-    /// Présents / attendus du créneau ouvert.
+    /// Présents / attendus de ce créneau.
     progress: Option<Progress>,
+    /// Tous les créneaux ouverts, repérés A, B, C…
+    sessions: Vec<RemoteSession>,
+    /// Prochain créneau prévu aujourd'hui.
+    next: Option<NextSession>,
     readers: usize,
     /// (numéro d'ordre, instant, résultat) du dernier badge.
     last: Option<(u64, Instant, Shown)>,
@@ -97,6 +113,8 @@ struct StateView<'a> {
     pending: u32,
     session: Option<&'a str>,
     progress: Option<Progress>,
+    sessions: &'a [RemoteSession],
+    next: Option<&'a NextSession>,
     readers: usize,
     last: Option<LastView<'a>>,
     /// Durée d'affichage d'un badge, en ms (barre de temps de la page).
@@ -106,7 +124,17 @@ struct StateView<'a> {
 impl Display {
     pub fn new() -> Display {
         Display {
-            inner: Mutex::new(Inner { network: Network::Unknown, pending: 0, session: None, progress: None, readers: 0, last: None, seq: 0 }),
+            inner: Mutex::new(Inner {
+                network: Network::Unknown,
+                pending: 0,
+                session: None,
+                progress: None,
+                sessions: vec![],
+                next: None,
+                readers: 0,
+                last: None,
+                seq: 0,
+            }),
             show_for: Mutex::new(DEFAULT_SHOW_FOR),
         }
     }
@@ -143,6 +171,23 @@ impl Display {
         self.with(|i| i.progress = p);
     }
 
+    /// Créneaux ouverts et prochain créneau, d'après le signal de vie.
+    pub fn set_sessions(&self, sessions: Vec<RemoteSession>, next: Option<NextSession>) {
+        self.with(|i| {
+            i.sessions = sessions;
+            i.next = next;
+        });
+    }
+
+    /// Avancement d'un créneau après un badge, sans attendre le prochain signal de vie.
+    pub fn update_session(&self, s: &RemoteSession) {
+        self.with(|i| {
+            if let Some(x) = i.sessions.iter_mut().find(|x| x.title == s.title && x.starts_at == s.starts_at) {
+                x.progress = s.progress;
+            }
+        });
+    }
+
     pub fn set_readers(&self, n: usize) {
         self.with(|i| i.readers = n);
     }
@@ -152,7 +197,17 @@ impl Display {
         let show_for = *self.show_for.lock().unwrap_or_else(|e| e.into_inner());
         self.with(|i| {
             let last = i.last.as_ref().filter(|(_, at, _)| at.elapsed() < show_for).map(|(seq, _, s)| LastView { seq: *seq, shown: s });
-            let view = StateView { network: i.network, pending: i.pending, session: i.session.as_deref(), progress: i.progress, readers: i.readers, last, show_ms: show_for.as_millis() as u64 };
+            let view = StateView {
+                network: i.network,
+                pending: i.pending,
+                session: i.session.as_deref(),
+                progress: i.progress,
+                sessions: &i.sessions,
+                next: i.next.as_ref(),
+                readers: i.readers,
+                last,
+                show_ms: show_for.as_millis() as u64,
+            };
             serde_json::to_string(&view).expect("état sérialisable")
         })
     }
@@ -180,6 +235,24 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&d.state_json()).unwrap();
         assert_eq!((v["progress"]["here"].as_u64(), v["progress"]["expected"].as_u64()), (Some(10), Some(24)));
         assert_eq!((v["last"]["kind"].as_str(), v["last"]["feedback"].as_str(), v["last"]["seq"].as_u64()), (Some("queued"), Some("warn"), Some(1)));
+
+        assert_eq!(v["sessions"].as_array().map(Vec::len), Some(0));
+
+        // Plusieurs créneaux ouverts : la liste, puis l'avancement mis à jour par un badge.
+        let at = |h: &str| chrono::NaiveDateTime::parse_from_str(&format!("2026-11-17 {h}"), "%Y-%m-%d %H:%M").unwrap();
+        let mk = |tag, title: &str, here| RemoteSession {
+            tag: Some(tag),
+            title: title.into(),
+            room: Some("B12".into()),
+            starts_at: at("14:00"),
+            ends_at: at("16:00"),
+            progress: Progress { here, expected: 12 },
+        };
+        d.set_sessions(vec![mk(0, "TD Algo", 3), mk(1, "TP Réseaux", 5)], Some(NextSession { title: "CM".into(), starts_at: at("16:00") }));
+        d.update_session(&mk(1, "TP Réseaux", 6));
+        let v: serde_json::Value = serde_json::from_str(&d.state_json()).unwrap();
+        assert_eq!((v["sessions"][0]["progress"]["here"].as_u64(), v["sessions"][1]["progress"]["here"].as_u64()), (Some(3), Some(6)));
+        assert_eq!((v["sessions"][1]["tag"].as_u64(), v["next"]["title"].as_str()), (Some(1), Some("CM")));
 
         // Chaque badge a son numéro : la page s'en sert pour relancer l'animation.
         d.show(Shown::random_uid());

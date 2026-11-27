@@ -19,7 +19,8 @@ use tauri::{AppHandle, Emitter, Manager};
 
 pub struct AppState {
     db: Arc<Mutex<Connection>>,
-    /// Créneau qui reçoit les badges (None = simple identification).
+    /// Créneau affiché dans l'écran d'émargement. Tous les créneaux ouverts reçoivent les badges
+    /// (`attendance::scan`) ; celui-ci est seulement préféré quand un étudiant est attendu dans plusieurs.
     active_session: Arc<Mutex<Option<Id>>>,
     /// État de chaque lecteur, indexé par son identifiant stable.
     readers: Arc<Mutex<BTreeMap<String, ReaderStatus>>>,
@@ -53,15 +54,10 @@ impl AppState {
     }
 }
 
-/// Traite un UID comme un passage de carte et notifie le front (`card-scanned`).
-pub(crate) fn process_uid(app: &AppHandle, db: &Mutex<Connection>, active: Option<Id>, uid: &str) -> Feedback {
-    let result = {
-        let conn = lock(db);
-        match active {
-            Some(sid) => attendance::record_scan(&conn, sid, uid, db::now()),
-            None => attendance::identify(&conn, uid),
-        }
-    };
+/// Traite un UID comme un passage de carte et notifie le front (`card-scanned`) : le badge va au
+/// créneau ouvert où l'étudiant est attendu (`focus` = créneau affiché, préféré à égalité).
+pub(crate) fn process_uid(app: &AppHandle, db: &Mutex<Connection>, focus: Option<Id>, uid: &str) -> Feedback {
+    let result = attendance::scan(&lock(db), focus, uid, db::now());
     match result {
         Ok(outcome) => {
             let _ = app.emit("card-scanned", &outcome);

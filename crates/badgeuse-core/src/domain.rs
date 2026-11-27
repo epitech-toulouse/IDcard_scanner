@@ -49,7 +49,8 @@ pub fn auto_action(
     }
 }
 
-/// Créneau actif (celui qui reçoit les badges), réévalué en continu :
+/// Créneau actif (affiché par défaut à l'émargement et préféré quand un étudiant est attendu dans
+/// plusieurs créneaux ouverts, voir `pick_scan_session`), réévalué en continu :
 /// - l'actif est gardé tant qu'il est ouvert et pas terminé ;
 /// - sinon, le créneau ouvert en cours (fin non passée) qui commence le plus tôt le remplace ;
 /// - à défaut, un actif ouvert mais terminé est gardé (retardataires, correction du prof).
@@ -75,14 +76,33 @@ pub fn session_window_contains(starts_at: NaiveDateTime, ends_at: NaiveDateTime,
     at >= starts_at - Duration::minutes(lead_min.max(0)) && at < ends_at
 }
 
-/// Créneau qui reçoit un badge rejoué par une borne. `candidates` : (id, début) des créneaux
-/// dont la fenêtre contient l'heure du badge. On garde l'actif s'il en fait partie, sinon le
-/// plus tôt commencé ; à défaut, l'actif (même traitement qu'un badge en direct).
-pub fn pick_remote_session(active: Option<i64>, candidates: &[(i64, NaiveDateTime)]) -> Option<i64> {
-    if let Some(a) = active.filter(|a| candidates.iter().any(|c| c.0 == *a)) {
-        return Some(a);
-    }
-    candidates.iter().min_by_key(|c| (c.1, c.0)).map(|c| c.0).or(active)
+/// Créneau qui pourrait recevoir un badge : ouvert (ou clos, pour un badge de borne rejoué dans sa
+/// fenêtre), où l'étudiant est attendu ou a déjà une ligne de présence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScanCandidate {
+    pub id: i64,
+    pub starts_at: NaiveDateTime,
+    pub ends_at: NaiveDateTime,
+    /// L'étudiant y est déjà présent / en retard : un badge n'y changerait rien.
+    pub settled: bool,
+}
+
+/// Créneau qui reçoit un badge pris à l'instant `at`, parmi plusieurs créneaux ouverts en même temps.
+/// Par ordre de préférence :
+/// 1. un créneau dont la fenêtre (`début − avance` → fin) contient l'heure du badge ;
+/// 2. un créneau où le badge change quelque chose (pas encore présent / en retard) ;
+/// 3. le créneau affiché à l'écran (`focus`) ;
+/// 4. dans la fenêtre : celui qui a commencé le plus tôt ; hors fenêtre (créneau terminé mais pas
+///    clos, ouvert en avance à la main) : celui dont le début est le plus proche.
+pub fn pick_scan_session(focus: Option<i64>, candidates: &[ScanCandidate], at: NaiveDateTime, lead_min: i64) -> Option<i64> {
+    candidates
+        .iter()
+        .min_by_key(|c| {
+            let in_window = session_window_contains(c.starts_at, c.ends_at, lead_min, at);
+            let order = if in_window { c.starts_at.and_utc().timestamp() } else { (at - c.starts_at).num_seconds().abs() };
+            (!in_window, c.settled, focus != Some(c.id), order, c.id)
+        })
+        .map(|c| c.id)
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -245,16 +265,28 @@ mod tests {
     }
 
     #[test]
-    fn remote_session_choice() {
-        let (a, b) = ((1, dt("2026-11-17 08:00")), (2, dt("2026-11-17 08:30")));
-        // L'actif gagne s'il est candidat, même s'il commence plus tard.
-        assert_eq!(pick_remote_session(Some(2), &[a, b]), Some(2));
-        // Sinon le plus tôt commencé.
-        assert_eq!(pick_remote_session(Some(9), &[b, a]), Some(1));
-        assert_eq!(pick_remote_session(None, &[b, a]), Some(1));
-        // Aucun candidat : l'actif tel quel, ou rien.
-        assert_eq!(pick_remote_session(Some(9), &[]), Some(9));
-        assert_eq!(pick_remote_session(None, &[]), None);
+    fn scan_session_choice() {
+        let c = |id, s: &str, e: &str, settled| ScanCandidate { id, starts_at: dt(s), ends_at: dt(e), settled };
+        let td = c(1, "2026-11-17 14:00", "2026-11-17 16:00", false);
+        let tp = c(2, "2026-11-17 14:30", "2026-11-17 17:00", false);
+        let at = dt("2026-11-17 14:40");
+        // Deux créneaux en cours : le plus tôt commencé, sauf si l'écran en affiche un autre.
+        assert_eq!(pick_scan_session(None, &[tp, td], at, 10), Some(1));
+        assert_eq!(pick_scan_session(Some(2), &[td, tp], at, 10), Some(2));
+        assert_eq!(pick_scan_session(Some(9), &[td, tp], at, 10), Some(1));
+        // Déjà présent au TD : le badge va au TP où il est aussi attendu.
+        let td_done = ScanCandidate { settled: true, ..td };
+        assert_eq!(pick_scan_session(Some(1), &[td_done, tp], at, 10), Some(2));
+        // Déjà présent partout : le créneau en cours le plus tôt (« déjà enregistré »).
+        let tp_done = ScanCandidate { settled: true, ..tp };
+        assert_eq!(pick_scan_session(None, &[tp_done, td_done], at, 10), Some(1));
+        // Le TD est terminé mais pas clos, le cours suivant a commencé : le cours suivant.
+        let next = c(3, "2026-11-17 16:00", "2026-11-17 18:00", false);
+        assert_eq!(pick_scan_session(Some(1), &[td, next], dt("2026-11-17 16:05"), 10), Some(3));
+        // Ouvert en avance (avant la fenêtre) ou terminé : gardé faute de mieux, le plus proche.
+        assert_eq!(pick_scan_session(None, &[td, next], dt("2026-11-17 13:00"), 10), Some(1));
+        assert_eq!(pick_scan_session(None, &[td, next], dt("2026-11-17 19:00"), 10), Some(3));
+        assert_eq!(pick_scan_session(Some(1), &[], at, 10), None);
     }
 
     #[test]
