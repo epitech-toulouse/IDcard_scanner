@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PeopleTabs from "../components/PeopleTabs.svelte";
   import { untrack } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import { api } from "../lib/api";
@@ -138,6 +139,8 @@
     }
   }
 </script>
+
+<PeopleTabs current="etudiants" />
 
 <div class="page-head">
   <div>

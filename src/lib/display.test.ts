@@ -10,6 +10,7 @@ const mk = (id: number, start: string, end: string, state: Session["state"] = "p
   ends_at: `2026-11-17T${end}:00`,
   late_after_min: late,
   state,
+  series_id: null,
 });
 const at = (t: string) => `2026-11-17T${t}:00`;
 

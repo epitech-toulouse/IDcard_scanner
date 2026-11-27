@@ -5,117 +5,173 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Badgeuse</title>
 <style>
+  /* Pensé pour l'écran 7" du Pi (800 × 480) : 1rem = 16 px à cette taille, et tout s'agrandit
+     proportionnellement sur un écran HDMI plus grand. Aucune ressource externe (police du système). */
   :root {
-    --bg: #0f1722;
-    --fg: #f2f5f9;
-    --muted: #93a1b5;
-    --ok: #1f9d55;
-    --warn: #d98200;
-    --error: #d13b3b;
-    --silent: #2f7fb8;
-    --idle: #1a2536;
+    font-size: min(2vw, 3.3333vh);
+    --bg: #0e1420;
+    --bar: #131b29;
+    --card: #16202f;
+    --line: #243247;
+    --fg: #f4f6fa;
+    --muted: #a9b4c6;
+    --muted-2: #8d99ad;
+    --accent: #8fb0ff;
+    --ok: #147a42;
+    --silent: #2560a8;
+    --warn: #a85600;
+    --error: #b8262f;
+    --progress: #34c27a;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
     background: var(--bg);
     color: var(--fg);
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    display: grid;
-    grid-template-rows: auto 1fr;
+    font-family: Inter, "Noto Sans", "DejaVu Sans", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
     cursor: none;
-  }
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1.5rem;
-    padding: 1.2rem 2rem;
-    font-size: clamp(1rem, 2.2vw, 1.7rem);
-  }
-  #session { font-weight: 600; }
-  .pill {
-    padding: 0.3em 0.9em;
-    border-radius: 999px;
-    background: var(--idle);
-    color: var(--muted);
-    white-space: nowrap;
-  }
-  .pill.ok { color: #8be0ae; }
-  .pill.offline { background: #3b2a10; color: #ffc46b; }
-  .pill.refused { background: #3d1717; color: #ff9b9b; }
-  main {
-    display: grid;
-    place-items: center;
-    padding: 1rem 2rem 2rem;
     transition: background 0.2s;
   }
-  main.ok { background: var(--ok); }
-  main.silent { background: var(--silent); }
-  main.warn { background: var(--warn); }
-  main.error { background: var(--error); }
-  .panel { text-align: center; max-width: 90vw; }
-  #idle .clock { font-size: clamp(4rem, 16vw, 12rem); font-weight: 200; letter-spacing: 0.02em; line-height: 1; }
-  #idle .hint { margin-top: 1.5rem; font-size: clamp(1.4rem, 3.6vw, 3rem); color: var(--muted); }
-  #progress { margin: 3rem auto 0; width: min(46rem, 80vw); }
-  #progress .count { font-size: clamp(1.4rem, 3.6vw, 2.8rem); color: var(--muted); }
-  #progress .count strong { color: var(--fg); font-size: 1.5em; font-variant-numeric: tabular-nums; }
-  #progress .bar { margin-top: 0.8rem; height: clamp(0.8rem, 1.6vw, 1.3rem); border-radius: 999px; background: var(--idle); overflow: hidden; }
-  #progress .bar span { display: block; height: 100%; width: 0; background: var(--ok); border-radius: inherit; transition: width 0.4s ease-out; }
-  #result .icon {
-    width: clamp(5rem, 14vw, 10rem);
-    height: clamp(5rem, 14vw, 10rem);
-    margin: 0 auto 1.5rem;
-    border-radius: 50%;
-    border: 0.4rem solid currentColor;
-    display: grid;
-    place-items: center;
-    font-size: clamp(3rem, 9vw, 7rem);
-    line-height: 1;
+  body.ok { background: var(--ok); }
+  body.silent { background: var(--silent); }
+  body.warn { background: var(--warn); }
+  body.error { background: var(--error); }
+
+  /* Barre d'état */
+  header { height: 4rem; flex: none; display: flex; align-items: center; gap: 1rem; padding: 0 1.5rem; background: var(--bar); }
+  body:not(.idle) header { background: rgb(0 0 0 / 16%); }
+  .where { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .kicker { font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-2); }
+  body:not(.idle) .kicker { color: rgb(255 255 255 / 80%); }
+  #session { font-size: 1.25rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chip { display: flex; align-items: center; gap: 0.5rem; height: 2.125rem; padding: 0 0.875rem; border-radius: 99px; font-size: 0.94rem; font-weight: 600; white-space: nowrap; background: #1b2638; color: var(--muted); }
+  .chip .dot { width: 0.56rem; height: 0.56rem; border-radius: 50%; background: var(--muted-2); }
+  .chip.ok { background: #13301f; color: #7ee2a8; }
+  .chip.ok .dot { background: var(--progress); }
+  .chip.offline { background: #3b2a10; color: #ffc46b; }
+  .chip.offline .dot { background: #ffb020; }
+  .chip.refused { background: #3d1717; color: #ff9b9b; }
+  .chip.refused .dot { background: #ff6b6b; }
+  body:not(.idle) .chip.ok { background: rgb(0 0 0 / 20%); color: #fff; }
+  #hclock { font-size: 1.625rem; font-weight: 700; }
+
+  main { flex: 1; min-height: 0; display: flex; }
+
+  /* Attente */
+  #idle { flex: 1; display: flex; gap: 1.5rem; padding: 1.5rem 1.5rem 1.25rem; }
+  .invite { flex: 1.25; display: flex; flex-direction: column; justify-content: center; gap: 0.875rem; }
+  .picto { width: 7rem; height: 7rem; border-radius: 1.75rem; background: #1b2638; color: var(--accent); display: grid; place-items: center; }
+  .picto svg { width: 4rem; height: 4rem; }
+  #idle-title { font-size: 2.75rem; font-weight: 800; line-height: 1.05; letter-spacing: -0.01em; }
+  #idle-title.long { font-size: 2.25rem; }
+  #idle-sub { font-size: 1.3rem; color: var(--muted); line-height: 1.35; }
+  .side { flex: 1; align-self: center; }
+  #progress { background: var(--card); border: 1px solid var(--line); border-radius: 1.375rem; padding: 1.625rem; display: flex; flex-direction: column; gap: 0.875rem; }
+  #progress .kicker { color: var(--muted); font-weight: 700; }
+  .count { display: flex; align-items: baseline; gap: 0.625rem; }
+  #here { font-size: 4.75rem; font-weight: 800; line-height: 0.9; letter-spacing: -0.03em; }
+  .of { font-size: 1.875rem; font-weight: 600; color: var(--muted); }
+  .bar { height: 0.875rem; border-radius: 99px; background: var(--line); overflow: hidden; }
+  #bar { height: 100%; width: 0; border-radius: inherit; background: var(--progress); transition: width 0.4s ease-out; }
+  #missing { font-size: 1.06rem; color: var(--muted); }
+  #bigclock { display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem; text-align: right; }
+  #clock { font-size: 6rem; font-weight: 300; line-height: 1; letter-spacing: -0.02em; }
+  #date { font-size: 1.375rem; color: var(--muted); }
+  #date::first-letter { text-transform: uppercase; }
+
+  /* Résultat d'un badge */
+  #result { flex: 1; display: flex; flex-direction: column; }
+  .res { flex: 1; display: flex; align-items: center; gap: 2rem; padding: 0 3rem; }
+  .icon { width: 9.25rem; height: 9.25rem; flex: none; border-radius: 50%; background: #fff; display: grid; place-items: center; }
+  .icon svg { width: 5.5rem; height: 5.5rem; }
+  body.ok .icon { color: var(--ok); }
+  body.silent .icon { color: var(--silent); }
+  body.warn .icon { color: var(--warn); }
+  body.error .icon { color: var(--error); }
+  .texts { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.375rem; }
+  #name { font-size: 4rem; font-weight: 800; line-height: 1.02; letter-spacing: -0.02em; overflow-wrap: anywhere; }
+  #label { font-size: 2.25rem; font-weight: 700; }
+  #message { font-size: 1.375rem; line-height: 1.3; opacity: 0.92; }
+  .timer { height: 0.5rem; flex: none; background: rgb(0 0 0 / 18%); }
+  #timer { height: 100%; width: 0; background: rgb(255 255 255 / 75%); }
+  #timer.run { animation: shrink var(--show, 2000ms) linear forwards; }
+  @keyframes shrink { from { width: 100%; } to { width: 0; } }
+  #result.pop .res { animation: pop 0.25s ease-out; }
+  @keyframes pop { from { transform: scale(0.95); opacity: 0.4; } to { transform: scale(1); opacity: 1; } }
+
+  /* Alertes */
+  .alert {
+    position: fixed; left: 1.5rem; right: 1.5rem; bottom: 1.25rem; display: flex; align-items: center; gap: 0.875rem;
+    padding: 0.875rem 1.125rem; border-radius: 0.875rem; background: #3a1518; border: 1px solid #7a2a31; color: #ffd7da;
+    font-size: 1.125rem; font-weight: 600;
   }
-  #result .name { font-size: clamp(2.6rem, 9vw, 7rem); font-weight: 700; line-height: 1.1; overflow-wrap: anywhere; }
-  #result .label { margin-top: 0.8rem; font-size: clamp(2rem, 6vw, 4.5rem); font-weight: 600; }
-  #result .message { margin-top: 0.8rem; font-size: clamp(1.3rem, 3.4vw, 2.6rem); opacity: 0.92; }
-  #result.pop .panel { animation: pop 0.25s ease-out; }
-  @keyframes pop { from { transform: scale(0.94); opacity: 0.4; } to { transform: scale(1); opacity: 1; } }
-  #noapp {
-    position: fixed; inset: auto 0 0 0; padding: 0.8rem; text-align: center;
-    background: var(--error); font-size: 1.3rem;
-  }
-  #mock { position: fixed; left: 1rem; bottom: 1rem; display: flex; gap: 0.5rem; cursor: auto; }
-  #mock input, #mock button { font: inherit; padding: 0.4rem 0.7rem; }
+  .alert svg { width: 1.625rem; height: 1.625rem; flex: none; }
+  #noapp { z-index: 2; }
+
+  #mock { position: fixed; left: 1rem; top: 4.5rem; display: flex; gap: 0.5rem; cursor: auto; }
+  #mock input, #mock button { font: inherit; font-size: 0.9rem; padding: 0.4rem 0.7rem; }
   [hidden] { display: none !important; }
-  @media (prefers-reduced-motion: reduce) { #result.pop .panel { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { #result.pop .res { animation: none; } body { transition: none; } }
 </style>
 </head>
-<body>
+<body class="idle">
 <header>
-  <span id="session">Aucun créneau ouvert</span>
-  <span>
-    <span id="reader" class="pill offline" hidden>Lecteur NFC non détecté</span>
-    <span id="network" class="pill">Connexion…</span>
-  </span>
+  <div class="where">
+    <span class="kicker" id="kicker">Borne d'émargement</span>
+    <span id="session">Aucun créneau ouvert</span>
+  </div>
+  <span id="network" class="chip"><span class="dot"></span><span id="network-text">Connexion…</span></span>
+  <span id="hclock">--:--</span>
 </header>
 
-<main id="stage">
-  <div id="idle" class="panel">
-    <div class="clock" id="clock">--:--</div>
-    <div class="hint">Passez votre carte étudiante sur le lecteur</div>
-    <div id="progress" hidden>
-      <div class="count"><strong id="here">0</strong> / <span id="expected">0</span> présents</div>
-      <div class="bar"><span id="bar"></span></div>
+<main>
+  <div id="idle">
+    <div class="invite">
+      <div class="picto" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6" width="12" height="15" rx="2"/><path d="M6 10h5M6 13h3"/><path d="M17 9a5 5 0 0 1 0 7M19.5 6.5a9 9 0 0 1 0 12"/></svg>
+      </div>
+      <div id="idle-title">Aucun émargement en cours</div>
+      <div id="idle-sub">Vous pourrez badger dès que l'enseignant ouvre l'émargement.</div>
+    </div>
+    <div class="side">
+      <div id="progress" hidden>
+        <span class="kicker">Présents</span>
+        <div class="count"><span id="here">0</span><span class="of">/ <span id="expected">0</span></span></div>
+        <div class="bar"><div id="bar"></div></div>
+        <span id="missing"></span>
+      </div>
+      <div id="bigclock">
+        <span id="clock">--:--</span>
+        <span id="date"></span>
+      </div>
     </div>
   </div>
-  <div id="result" class="panel" hidden role="status" aria-live="assertive">
-    <div class="icon" id="icon"></div>
-    <div class="name" id="name"></div>
-    <div class="label" id="label"></div>
-    <div class="message" id="message"></div>
+
+  <div id="result" hidden role="status" aria-live="assertive">
+    <div class="res">
+      <div class="icon" id="icon" aria-hidden="true"></div>
+      <div class="texts">
+        <span id="name"></span>
+        <span id="label"></span>
+        <span id="message"></span>
+      </div>
+    </div>
+    <div class="timer"><div id="timer"></div></div>
   </div>
 </main>
 
-<div id="noapp" hidden>La borne ne répond plus : redémarrage en cours…</div>
+<div id="alert" class="alert" role="alert" hidden>
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/></svg>
+  <span id="alert-text"></span>
+</div>
+<div id="noapp" class="alert" role="alert" hidden>
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/></svg>
+  <span>La borne ne répond plus : redémarrage en cours…</span>
+</div>
 <form id="mock" hidden>
   <input id="mockuid" placeholder="UID (ex. 04:24:A5:82)" autocomplete="off">
   <button>Badger</button>
@@ -123,71 +179,126 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
-  const ICON = { ok: "✓", silent: "✓", warn: "!", error: "✕" };
+  const svg = (inner, w = 3) =>
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+  const ICONS = {
+    check: svg('<path d="m5 12.5 4.5 4.5L19 7.5"/>'),
+    clock: svg('<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>', 2.6),
+    cross: svg('<path d="M7 7l10 10M17 7 7 17"/>'),
+    queue: svg('<path d="M12 4v10M7.5 9.5 12 14l4.5-4.5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>', 2.6),
+  };
   const STATUS = { present: "Présent", late: "En retard" };
   let lastSeq = 0;
 
-  const fmt = new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  // ---- Horloge : l'affichage ne change qu'une fois par minute (pas de réécriture inutile du DOM) ----
+  const fmtTime = new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  const fmtDate = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long" });
   let shownClock = "";
   function clock() {
-    const t = fmt.format(new Date());
-    if (t !== shownClock) { // l'affichage ne change qu'une fois par minute : pas de réécriture du DOM
+    const now = new Date();
+    const t = fmtTime.format(now);
+    if (t !== shownClock) {
       shownClock = t;
       $("clock").textContent = t;
+      $("hclock").textContent = t;
+      $("date").textContent = fmtDate.format(now);
     }
   }
 
   function network(s) {
     const el = $("network");
-    el.className = "pill";
+    el.className = "chip";
+    let text = "Connexion…";
     if (s.network === "ok") {
       el.classList.add("ok");
-      el.textContent = "En ligne";
+      text = "En ligne";
     } else if (s.network === "refused") {
       el.classList.add("refused");
-      el.textContent = "Jeton refusé : vérifier la configuration";
+      text = "Jeton refusé";
     } else if (s.network === "offline") {
       el.classList.add("offline");
-      el.textContent = "Hors ligne" + (s.pending ? ` · ${s.pending} badge(s) en attente` : "");
-    } else {
-      el.textContent = "Connexion…";
+      text = "Hors ligne" + (s.pending ? ` · ${s.pending} en attente` : "");
+    }
+    $("network-text").textContent = text;
+  }
+
+  function alerts(s) {
+    let text = "";
+    if (s.network === "refused") text = "Jeton refusé par l'appli : vérifiez /etc/badgeuse-kiosk.toml";
+    else if (s.readers === 0) text = "Lecteur NFC non détecté : vérifiez le câble USB";
+    $("alert").hidden = !text;
+    $("alert-text").textContent = text;
+  }
+
+  function idle(s) {
+    const p = s.session ? s.progress : null;
+    $("kicker").textContent = s.session ? "Émargement en cours" : "Borne d'émargement";
+    $("session").textContent = s.session ?? "Aucun créneau ouvert";
+    $("idle-title").textContent = s.session ? "Passez votre carte" : "Aucun émargement en cours";
+    $("idle-title").classList.toggle("long", !s.session);
+    $("idle-sub").textContent = s.session
+      ? "Posez votre carte étudiante sur le lecteur, juste sous l'écran."
+      : "Vous pourrez badger dès que l'enseignant ouvre l'émargement.";
+    const withProgress = !!(p && p.expected);
+    $("progress").hidden = !withProgress;
+    $("bigclock").hidden = withProgress;
+    if (withProgress) {
+      $("here").textContent = p.here;
+      $("expected").textContent = p.expected;
+      $("bar").style.width = `${Math.min(100, (100 * p.here) / p.expected)}%`;
+      const left = Math.max(0, p.expected - p.here);
+      $("missing").textContent = left ? `${left} étudiant${left > 1 ? "s" : ""} n'${left > 1 ? "ont" : "a"} pas encore badgé` : "Tout le monde est là";
     }
   }
 
-  function progress(p) {
-    $("progress").hidden = !p || !p.expected;
-    if (!p || !p.expected) return;
-    $("here").textContent = p.here;
-    $("expected").textContent = p.expected;
-    $("bar").style.width = `${Math.min(100, (100 * p.here) / p.expected)}%`;
+  /** Nom, statut, message et icône d'un badge, d'après la réponse minimale de l'appli. */
+  function describe(l) {
+    switch (l.kind) {
+      case "recorded":
+        return { icon: l.status === "late" ? "clock" : "check", name: l.name, label: STATUS[l.status] ?? "", message: l.message };
+      case "already_scanned":
+        return { icon: "check", name: l.name, label: "Déjà enregistré", message: "Votre passage était déjà compté" };
+      case "not_expected":
+        return { icon: "cross", name: l.name, label: "Pas sur ce créneau", message: l.message };
+      case "identified":
+        return { icon: "check", name: l.name, label: "Carte reconnue", message: l.message };
+      case "queued":
+        return { icon: "queue", name: "Badge gardé", label: "", message: "Il sera transmis dès le retour du réseau" };
+      case "unknown_card":
+        return { icon: "cross", name: "Carte inconnue", label: "", message: "Voyez l'enseignant pour l'associer à votre nom" };
+      case "random_uid":
+        return { icon: "cross", name: "Carte non utilisable", label: "", message: l.message };
+      case "session_not_open":
+        return { icon: "cross", name: "Émargement fermé", label: "", message: l.message };
+      default:
+        return { icon: l.feedback === "error" ? "cross" : "check", name: l.name ?? "", label: STATUS[l.status] ?? "", message: l.message };
+    }
   }
 
   function render(s) {
-    $("session").textContent = s.session ?? "Aucun créneau ouvert";
-    progress(s.session ? s.progress : null);
-    $("reader").hidden = s.readers > 0;
     network(s);
+    alerts(s);
+    idle(s);
+    document.body.className = s.last ? s.last.feedback : "idle";
+    $("idle").hidden = !!s.last;
+    $("result").hidden = !s.last;
+    if (!s.last) return;
 
-    const stage = $("stage");
-    stage.className = "";
-    if (!s.last) {
-      $("idle").hidden = false;
-      $("result").hidden = true;
-      return;
-    }
-    const fb = s.last.feedback;
-    stage.classList.add(fb);
-    $("idle").hidden = true;
-    $("result").hidden = false;
-    $("icon").textContent = ICON[fb] ?? "";
-    $("name").textContent = s.last.name ?? "";
-    $("label").textContent = STATUS[s.last.status] ?? "";
-    $("message").textContent = s.last.message;
+    const d = describe(s.last);
+    $("icon").innerHTML = ICONS[d.icon] ?? "";
+    $("name").textContent = d.name ?? "";
+    $("label").textContent = d.label;
+    $("label").hidden = !d.label;
+    $("message").textContent = d.message ?? "";
     if (s.last.seq !== lastSeq) {
       lastSeq = s.last.seq;
+      const timer = $("timer");
+      timer.style.setProperty("--show", `${s.show_ms || 2000}ms`);
       $("result").classList.remove("pop");
-      void $("result").offsetWidth; // relance l'animation pour chaque nouveau badge
+      timer.classList.remove("run");
+      void $("result").offsetWidth; // relance les animations pour chaque nouveau badge
       $("result").classList.add("pop");
+      timer.classList.add("run");
     }
   }
 
