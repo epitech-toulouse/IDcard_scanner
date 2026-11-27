@@ -82,6 +82,29 @@
   #clock { font-size: 6rem; font-weight: 300; line-height: 1; letter-spacing: -0.02em; }
   #date { font-size: 1.375rem; color: var(--muted); }
   #date::first-letter { text-transform: uppercase; }
+  #next { font-size: 1rem; color: var(--muted-2); text-align: right; }
+
+  /* Plusieurs créneaux ouverts : une carte par créneau, repérée A, B, C… (mêmes couleurs que l'appli) */
+  #sessions { display: flex; flex-direction: column; gap: 0.75rem; }
+  .scard { background: var(--card); border: 1px solid var(--line); border-radius: 1.125rem; padding: 0.9rem 1.125rem; display: flex; flex-direction: column; gap: 0.6rem; }
+  .shead { display: flex; align-items: center; gap: 0.75rem; }
+  .tag { width: 2.5rem; height: 2.5rem; flex: none; border-radius: 0.625rem; background: var(--tag, #64748b); color: #fff; display: grid; place-items: center; font-weight: 800; font-size: 1.25rem; }
+  .tag-0 { --tag: #7c63e6; } .tag-1 { --tag: #1593b3; } .tag-2 { --tag: #c2477f; } .tag-3 { --tag: #64748b; }
+  .stexts { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .stitle { font-size: 1.2rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .swhere { font-size: 0.94rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .snum { display: flex; align-items: baseline; gap: 0.25rem; font-size: 1.06rem; font-weight: 600; color: var(--muted); white-space: nowrap; }
+  .snum b { font-size: 1.875rem; font-weight: 800; line-height: 1; color: var(--fg); }
+  .sbar { height: 0.625rem; border-radius: 99px; background: var(--line); overflow: hidden; }
+  .sbar div { height: 100%; border-radius: inherit; background: var(--progress); transition: width 0.4s ease-out; }
+  .more { font-size: 1rem; color: var(--muted-2); text-align: right; }
+
+  /* Créneau qui a reçu le badge */
+  #went { display: inline-flex; align-self: flex-start; align-items: center; gap: 0.75rem; margin-top: 0.625rem; padding: 0.625rem 1rem 0.625rem 0.625rem; border-radius: 0.875rem; background: rgb(0 0 0 / 22%); }
+  #went .tag { width: 2.375rem; height: 2.375rem; font-size: 1.2rem; background: #fff; color: var(--tag, #16202f); }
+  #went-texts { display: flex; flex-direction: column; line-height: 1.2; }
+  #went-title { font-size: 1.25rem; font-weight: 700; }
+  #went-where { font-size: 1.06rem; color: rgb(255 255 255 / 88%); }
 
   /* Résultat d'un badge */
   #result { flex: 1; display: flex; flex-direction: column; }
@@ -144,9 +167,11 @@
         <div class="bar"><div id="bar"></div></div>
         <span id="missing"></span>
       </div>
+      <div id="sessions" hidden></div>
       <div id="bigclock">
         <span id="clock">--:--</span>
         <span id="date"></span>
+        <span id="next" hidden></span>
       </div>
     </div>
   </div>
@@ -158,6 +183,10 @@
         <span id="name"></span>
         <span id="label"></span>
         <span id="message"></span>
+        <div id="went" hidden>
+          <span class="tag" id="went-tag"></span>
+          <span id="went-texts"><span id="went-title"></span><span id="went-where"></span></span>
+        </div>
       </div>
     </div>
     <div class="timer"><div id="timer"></div></div>
@@ -230,18 +259,78 @@
     $("alert-text").textContent = text;
   }
 
+  const hhmm = (t) => (t ? String(t).slice(11, 16) : "");
+  const letter = (i) => {
+    let s = "";
+    for (let n = i; n >= 0; n = Math.floor(n / 26) - 1) s = String.fromCharCode(65 + (n % 26)) + s;
+    return s;
+  };
+  /** Repère d'un créneau : lettre + classe de couleur (« · » pour un créneau qui n'est plus ouvert). */
+  const tagOf = (t) => (t === null || t === undefined ? { letter: "·", cls: "" } : { letter: letter(t), cls: `tag-${t % 4}` });
+  const where = (x) => [x.room, x.starts_at && x.ends_at ? `${hhmm(x.starts_at)} – ${hhmm(x.ends_at)}` : ""].filter(Boolean).join(" · ");
+  const el = (tag, cls, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  };
+
+  /** Cartes des créneaux ouverts (3 au plus sur l'écran 7"). */
+  const MAX_CARDS = 3;
+  function sessionCards(list) {
+    const box = $("sessions");
+    box.replaceChildren();
+    for (const x of list.slice(0, MAX_CARDS)) {
+      const t = tagOf(x.tag);
+      const card = el("div", "scard");
+      const head = el("div", "shead");
+      head.append(el("span", `tag ${t.cls}`, t.letter));
+      const texts = el("span", "stexts");
+      texts.append(el("span", "stitle", x.title));
+      texts.append(el("span", "swhere", [x.room, x.ends_at ? `jusqu'à ${hhmm(x.ends_at)}` : ""].filter(Boolean).join(" · ")));
+      head.append(texts);
+      const num = el("span", "snum");
+      num.append(el("b", "", String(x.progress.here)), document.createTextNode(`/ ${x.progress.expected}`));
+      head.append(num);
+      const bar = el("div", "sbar");
+      const fill = el("div");
+      fill.style.width = `${x.progress.expected ? Math.min(100, (100 * x.progress.here) / x.progress.expected) : 0}%`;
+      bar.append(fill);
+      card.append(head, bar);
+      box.append(card);
+    }
+    if (list.length > MAX_CARDS) {
+      const n = list.length - MAX_CARDS;
+      box.append(el("span", "more", `+ ${n} autre${n > 1 ? "s" : ""} créneau${n > 1 ? "x" : ""} en cours`));
+    }
+  }
+
   function idle(s) {
-    const p = s.session ? s.progress : null;
-    $("kicker").textContent = s.session ? "Émargement en cours" : "Borne d'émargement";
-    $("session").textContent = s.session ?? "Aucun créneau ouvert";
-    $("idle-title").textContent = s.session ? "Passez votre carte" : "Aucun émargement en cours";
-    $("idle-title").classList.toggle("long", !s.session);
-    $("idle-sub").textContent = s.session
-      ? "Posez votre carte étudiante sur le lecteur, juste sous l'écran."
-      : "Vous pourrez badger dès que l'enseignant ouvre l'émargement.";
+    // Appli d'avant les émargements simultanés : seul le premier créneau est connu.
+    const list = s.sessions?.length ? s.sessions : s.session ? [{ title: s.session, progress: s.progress }] : [];
+    const multi = list.length > 1;
+    const one = list.length === 1 ? list[0] : null;
+    const p = one ? one.progress : null;
+    $("kicker").textContent = one ? "Émargement en cours" : "Borne d'émargement";
+    $("session").textContent = multi ? `${list.length} émargements en cours` : (one?.title ?? "Aucun créneau ouvert");
+    $("idle-title").textContent = list.length ? "Passez votre carte" : "Aucun émargement en cours";
+    $("idle-title").classList.toggle("long", !list.length);
+    $("idle-sub").textContent = multi
+      ? "Votre passage est compté dans votre créneau, automatiquement."
+      : list.length
+        ? "Posez votre carte étudiante sur le lecteur, juste sous l'écran."
+        : "Vous pourrez badger dès que l'enseignant ouvre l'émargement.";
+    const next = s.next ? `Prochain : ${s.next.title} à ${hhmm(s.next.starts_at)}` : "";
+    $("next").textContent = next;
+    $("next").hidden = !next;
+    $("sessions").hidden = !multi;
+    if (multi) {
+      sessionCards(list);
+      if (next) $("sessions").append(el("span", "more", next));
+    }
     const withProgress = !!(p && p.expected);
     $("progress").hidden = !withProgress;
-    $("bigclock").hidden = withProgress;
+    $("bigclock").hidden = withProgress || multi;
     if (withProgress) {
       $("here").textContent = p.here;
       $("expected").textContent = p.expected;
@@ -259,7 +348,7 @@
       case "already_scanned":
         return { icon: "check", name: l.name, label: "Déjà enregistré", message: "Votre passage était déjà compté" };
       case "not_expected":
-        return { icon: "cross", name: l.name, label: "Pas sur ce créneau", message: l.message };
+        return { icon: "cross", name: l.name, label: "Pas attendu maintenant", message: l.message };
       case "identified":
         return { icon: "check", name: l.name, label: "Carte reconnue", message: l.message };
       case "queued":
@@ -279,7 +368,8 @@
     network(s);
     alerts(s);
     idle(s);
-    document.body.className = s.last ? s.last.feedback : "idle";
+    // Non attendu : orange (l'enseignant peut l'ajouter), pas rouge comme une carte refusée.
+    document.body.className = s.last ? (s.last.kind === "not_expected" ? "warn" : s.last.feedback) : "idle";
     $("idle").hidden = !!s.last;
     $("result").hidden = !s.last;
     if (!s.last) return;
@@ -290,6 +380,15 @@
     $("label").textContent = d.label;
     $("label").hidden = !d.label;
     $("message").textContent = d.message ?? "";
+    const ws = s.last.session;
+    $("went").hidden = !ws;
+    if (ws) {
+      const t = tagOf(ws.tag);
+      $("went-tag").className = `tag ${t.cls}`;
+      $("went-tag").textContent = t.letter;
+      $("went-title").textContent = ws.title;
+      $("went-where").textContent = where(ws);
+    }
     if (s.last.seq !== lastSeq) {
       lastSeq = s.last.seq;
       const timer = $("timer");

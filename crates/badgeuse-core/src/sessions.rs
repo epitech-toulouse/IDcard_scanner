@@ -307,6 +307,30 @@ pub fn current_open(c: &Connection) -> Result<Option<Id>> {
     .optional()?)
 }
 
+/// Créneaux ouverts, dans l'ordre de leurs repères A, B, C… (début, puis id) : le même ordre
+/// côté appli (`src/lib/sessionTags.ts`) et sur la borne.
+pub fn open_rows(c: &Connection) -> Result<Vec<SessionRow>> {
+    let ids: Vec<Id> = c
+        .prepare("SELECT id FROM sessions WHERE state = 'open' ORDER BY starts_at, id")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    ids.into_iter().map(|id| row(c, id)).collect()
+}
+
+/// Prochain créneau prévu plus tard dans la journée (affiché sur la borne en attente).
+pub fn next_planned_today(c: &Connection, now: NaiveDateTime) -> Result<Option<Session>> {
+    let end_of_day = now.date().and_hms_opt(23, 59, 59).expect("heure valide");
+    Ok(c.query_row(
+        &format!(
+            "SELECT {SESSION_COLS} FROM sessions WHERE state = 'planned' AND starts_at > ?1 AND starts_at <= ?2
+             ORDER BY starts_at, id LIMIT 1"
+        ),
+        params![now, end_of_day],
+        session_from_row,
+    )
+    .optional()?)
+}
+
 /// Créneau actif à retenir maintenant (voir `domain::pick_active`).
 pub fn resolve_active(c: &Connection, current: Option<Id>, now: NaiveDateTime) -> Result<Option<Id>> {
     let key = |s: &Session| (s.id, s.state, s.starts_at, s.ends_at);

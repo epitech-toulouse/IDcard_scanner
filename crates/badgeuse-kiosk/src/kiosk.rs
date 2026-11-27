@@ -130,6 +130,9 @@ impl Kiosk {
             Ok(reply) => {
                 self.forget(p.seq);
                 self.display.set_network(Network::Ok);
+                if let Some(rs) = &reply.session {
+                    self.display.update_session(rs);
+                }
                 if reply.session_title.is_some() {
                     self.display.set_session(reply.session_title.clone());
                     // Ancienne appli : pas d'avancement, on garde celui du dernier signal de vie.
@@ -213,6 +216,7 @@ impl Kiosk {
                 self.display.set_network(Network::Ok);
                 self.display.set_session(hb.session_title);
                 self.display.set_progress(hb.progress);
+                self.display.set_sessions(hb.sessions, hb.next);
                 if let Some(offer) = hb.update {
                     self.prepare_update(&offer);
                 }
@@ -290,6 +294,7 @@ mod tests {
                 feedback: Feedback::Ok,
                 session_title: Some("Réseaux".into()),
                 progress: Some(Progress { here: 11, expected: 24 }),
+                session: None,
             })
         }
 
@@ -308,6 +313,7 @@ mod tests {
                 session_title: Some("Réseaux".into()),
                 update: self.offer.lock().unwrap().clone(),
                 progress: Some(Progress { here: 10, expected: 24 }),
+                ..Default::default()
             })
         }
     }

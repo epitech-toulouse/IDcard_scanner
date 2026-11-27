@@ -36,6 +36,20 @@
   --closed-bd: #d5d9e0;
   --now: #c62f3c;
 
+  /* Repères A, B, C… des créneaux ouverts en même temps (fond plein, texte blanc ; fond doux, texte teinté). */
+  --tag-0: #5b3fc4;
+  --tag-0-soft: #efebfb;
+  --tag-0-text: #4a32a6;
+  --tag-1: #0b6e86;
+  --tag-1-soft: #e1f2f6;
+  --tag-1-text: #095a6e;
+  --tag-2: #a1366b;
+  --tag-2-soft: #f9e6ef;
+  --tag-2-text: #8a2c5b;
+  --tag-3: #475569;
+  --tag-3-soft: #eceff3;
+  --tag-3-text: #3a4556;
+
   --radius: 14px;
   --radius-sm: 8px;
   --shadow: none;
@@ -85,6 +99,14 @@
     --closed-bg: #222836;
     --closed-bd: #3a4256;
     --now: #f06672;
+    --tag-0-soft: #2a2350;
+    --tag-0-text: #c3b5ff;
+    --tag-1-soft: #10333d;
+    --tag-1-text: #7fd6ea;
+    --tag-2-soft: #3a1a2a;
+    --tag-2-text: #f4a6cb;
+    --tag-3-soft: #262d38;
+    --tag-3-text: #c0cad8;
     --shadow-pop: 0 1px 2px rgb(0 0 0 / 40%);
     color-scheme: dark;
   }
@@ -185,6 +207,16 @@ td.actions { text-align: right; white-space: nowrap; }
 .table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 
 /* ---------- Statuts ---------- */
+/* Repère d'un créneau : carré plein (.tag) ou étiquette douce (.tag-chip). */
+.tag-0 { --tag: var(--tag-0); --tag-soft: var(--tag-0-soft); --tag-text: var(--tag-0-text); }
+.tag-1 { --tag: var(--tag-1); --tag-soft: var(--tag-1-soft); --tag-text: var(--tag-1-text); }
+.tag-2 { --tag: var(--tag-2); --tag-soft: var(--tag-2-soft); --tag-text: var(--tag-2-text); }
+.tag-3 { --tag: var(--tag-3); --tag-soft: var(--tag-3-soft); --tag-text: var(--tag-3-text); }
+.tag-none { --tag: var(--muted); --tag-soft: var(--none-bg); --tag-text: var(--text-2); }
+.tag { display: inline-grid; place-items: center; flex: none; width: 1.9rem; height: 1.9rem; border-radius: 7px; background: var(--tag); color: #fff; font-weight: 800; font-size: 0.95rem; line-height: 1; }
+.tag.sm { width: 1.5rem; height: 1.5rem; border-radius: 6px; font-size: 0.8rem; }
+.tag.lg { width: 2.4rem; height: 2.4rem; border-radius: 9px; font-size: 1.15rem; }
+.tag-chip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.05rem 0.55rem; border-radius: 99px; background: var(--tag-soft); color: var(--tag-text); font-size: 0.8rem; font-weight: 700; white-space: nowrap; }
 .pill { display: inline-block; padding: 0.15rem 0.65rem; border-radius: 99px; font-size: 0.85rem; font-weight: 600; background: var(--none-bg); color: var(--text-2); white-space: nowrap; }
 .pill.present { background: var(--present-bg); color: var(--present); }
 .pill.late { background: var(--late-bg); color: var(--late); }

@@ -10,7 +10,6 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use badgeuse_core::nfc::{self, CardInfo, ReaderStatus};
-use badgeuse_core::model::SessionState;
 use badgeuse_core::remote::{self, HeartbeatReply, RemoteHeartbeat, RemoteReply, RemoteScan};
 use badgeuse_core::{Error, attendance, db, sessions, settings, update};
 use std::collections::HashMap;
@@ -201,13 +200,17 @@ async fn heartbeat(State(srv): State<Arc<Srv>>, headers: HeaderMap, body: Bytes)
             let version = hb.version.as_deref().filter(|v| update::valid_version(v));
             srv.touch(&hb.device, Some(hb.pending), version);
             let state = srv.app.state::<AppState>();
-            let open = state.active().and_then(|id| {
-                sessions::row(&state.db(), id).ok().filter(|r| r.session.state == SessionState::Open)
-            });
-            let session_title = open.as_ref().map(|r| r.session.title.clone());
-            let progress = open.as_ref().map(|r| remote::Progress::from_counts(&r.counts));
-            let update = update::published(&state.db()).ok().flatten();
-            Json(HeartbeatReply { session_title, update, progress }).into_response()
+            let conn = state.db();
+            let open = sessions::open_rows(&conn).unwrap_or_default();
+            let next = sessions::next_planned_today(&conn, db::now()).ok().flatten();
+            let update = update::published(&conn).ok().flatten();
+            drop(conn);
+            let reply = HeartbeatReply::new(
+                remote::RemoteSession::list(&open),
+                next.as_ref().map(remote::NextSession::from_session),
+                update,
+            );
+            Json(reply).into_response()
         }
         _ => (StatusCode::UNPROCESSABLE_ENTITY, "Signal de vie illisible").into_response(),
     }

@@ -6,9 +6,9 @@ const st = { id: 1, first_name: "Ada", last_name: "Lovelace" } as Student;
 
 describe("describeScan", () => {
   it("présent / retard avec l'heure", () => {
-    expect(describeScan({ kind: "recorded", uid: "x", student: st, status: "present", scanned_at: "2026-11-17T08:03:27" }))
+    expect(describeScan({ kind: "recorded", uid: "x", student: st, status: "present", scanned_at: "2026-11-17T08:03:27", session_id: 1 }))
       .toEqual({ cls: "present", title: "Ada LOVELACE", sub: "Présent · 08h03:27" });
-    expect(describeScan({ kind: "recorded", uid: "x", student: st, status: "late", scanned_at: "2026-11-17T08:20:00" }).sub)
+    expect(describeScan({ kind: "recorded", uid: "x", student: st, status: "late", scanned_at: "2026-11-17T08:20:00", session_id: 1 }).sub)
       .toBe("En retard · 08h20:00");
   });
 

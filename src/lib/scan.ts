@@ -1,7 +1,7 @@
 // Message affiché pour un badge (écran d'émargement, projection, affichage automatique).
 
 import { fmtTimeSec } from "./format";
-import { STATUS_LABEL, type ScanOutcome, type Student } from "./types";
+import { STATUS_LABEL, type Id, type ScanOutcome, type Student } from "./types";
 
 export interface ScanMessage {
   /** Classe CSS : present | late | absent | excused. */
@@ -11,6 +11,11 @@ export interface ScanMessage {
 }
 
 export const studentName = (st: Student) => `${st.first_name} ${st.last_name.toUpperCase()}`;
+
+/** Créneau qui a reçu le badge (badge enregistré ou déjà compté). */
+export function scanSession(o: ScanOutcome): Id | null {
+  return o.kind === "recorded" || o.kind === "already_scanned" ? o.session_id : null;
+}
 
 export function describeScan(o: ScanOutcome): ScanMessage {
   switch (o.kind) {
@@ -23,7 +28,7 @@ export function describeScan(o: ScanOutcome): ScanMessage {
     case "already_scanned":
       return { cls: o.status, title: studentName(o.student), sub: `Déjà enregistré (${STATUS_LABEL[o.status].toLowerCase()})` };
     case "not_expected":
-      return { cls: "absent", title: studentName(o.student), sub: "N'est pas attendu sur ce créneau" };
+      return { cls: "absent", title: studentName(o.student), sub: "Attendu dans aucun créneau ouvert" };
     case "unknown_card":
       return { cls: "absent", title: "Carte inconnue", sub: o.uid };
     case "random_uid":

@@ -104,8 +104,8 @@ export interface AttendanceRow {
 export interface SessionDetail { session: SessionRow; rows: AttendanceRow[] }
 
 export type ScanOutcome =
-  | { kind: "recorded"; uid: string; student: Student; status: Status; scanned_at: Naive }
-  | { kind: "already_scanned"; uid: string; student: Student; status: Status }
+  | { kind: "recorded"; uid: string; student: Student; status: Status; scanned_at: Naive; session_id: Id }
+  | { kind: "already_scanned"; uid: string; student: Student; status: Status; session_id: Id }
   | { kind: "not_expected"; uid: string; student: Student }
   | { kind: "unknown_card"; uid: string }
   | { kind: "identified"; uid: string; student: Student | null }
