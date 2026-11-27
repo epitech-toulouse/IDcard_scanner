@@ -99,6 +99,8 @@ struct StateView<'a> {
     progress: Option<Progress>,
     readers: usize,
     last: Option<LastView<'a>>,
+    /// Durée d'affichage d'un badge, en ms (barre de temps de la page).
+    show_ms: u64,
 }
 
 impl Display {
@@ -150,7 +152,7 @@ impl Display {
         let show_for = *self.show_for.lock().unwrap_or_else(|e| e.into_inner());
         self.with(|i| {
             let last = i.last.as_ref().filter(|(_, at, _)| at.elapsed() < show_for).map(|(seq, _, s)| LastView { seq: *seq, shown: s });
-            let view = StateView { network: i.network, pending: i.pending, session: i.session.as_deref(), progress: i.progress, readers: i.readers, last };
+            let view = StateView { network: i.network, pending: i.pending, session: i.session.as_deref(), progress: i.progress, readers: i.readers, last, show_ms: show_for.as_millis() as u64 };
             serde_json::to_string(&view).expect("état sérialisable")
         })
     }
@@ -165,6 +167,7 @@ mod tests {
         let d = Display::new();
         let v: serde_json::Value = serde_json::from_str(&d.state_json()).unwrap();
         assert_eq!((v["network"].as_str(), v["pending"].as_u64(), v["last"].is_null()), (Some("unknown"), Some(0), true));
+        assert_eq!(v["show_ms"].as_u64(), Some(DEFAULT_SHOW_FOR.as_millis() as u64));
 
         d.show(Shown::queued());
         d.set_network(Network::Offline);
