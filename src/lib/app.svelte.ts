@@ -1,7 +1,7 @@
 // État global de l'interface : route, statut du lecteur, notifications, dialogues.
 
 import { ask, open, save } from "@tauri-apps/plugin-dialog";
-import type { AppUpdate, AppUpdateProgress, ReadersStatus } from "./types";
+import type { AppUpdate, AppUpdateProgress, Id, ReadersStatus } from "./types";
 import { api } from "./api";
 
 // ---------- Routage par hash : #/emargement/12 ----------
@@ -28,6 +28,16 @@ export const reader = $state<ReadersStatus>({
   connected_count: 0,
   readers: [],
 });
+
+// ---------- Créneau actif (celui qui reçoit les badges) ----------
+
+export const active = $state<{ id: Id | null }>({ id: null });
+
+/** Rend un créneau actif côté backend et le mémorise pour la navigation. */
+export async function setActive(id: Id | null) {
+  await api.setActiveSession(id);
+  active.id = id;
+}
 
 // ---------- Notifications ----------
 

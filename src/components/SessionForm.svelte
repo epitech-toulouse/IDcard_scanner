@@ -5,10 +5,12 @@
   import { api } from "../lib/api";
   import { guard, toast } from "../lib/app.svelte";
   import { addMinutes, joinNaive, parseNaive, splitNaive, toNaive } from "../lib/format";
-  import type { Id, ProgramNode, Session, SessionRow } from "../lib/types";
+  import type { Id, Naive, ProgramNode, Session, SessionRow } from "../lib/types";
 
-  let { session = null, onclose, onsaved }: {
+  let { session = null, startAt = null, onclose, onsaved }: {
     session?: SessionRow | null;
+    /** Début proposé pour un nouveau créneau (clic dans le calendrier). */
+    startAt?: Naive | null;
     onclose: () => void;
     onsaved: (s: Session) => void;
   } = $props();
@@ -22,7 +24,7 @@
 
   // Le formulaire lit le créneau une seule fois, à l'ouverture.
   const initial = untrack(() => session);
-  const start0 = initial?.starts_at ?? toNaive(nextHalfHour());
+  const start0 = initial?.starts_at ?? untrack(() => startAt) ?? toNaive(nextHalfHour());
   let tree = $state<ProgramNode[]>([]);
   let title = $state(initial?.title ?? "");
   let room = $state(initial?.room ?? "");

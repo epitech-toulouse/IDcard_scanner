@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PeopleTabs from "../components/PeopleTabs.svelte";
   import { onMount } from "svelte";
   import { api } from "../lib/api";
   import { confirmAction, guard, navigate, toast } from "../lib/app.svelte";
@@ -67,6 +68,8 @@
     await load();
   }
 </script>
+
+<PeopleTabs current="groupes" />
 
 <div class="page-head">
   <div>
